@@ -334,13 +334,17 @@ def test_default_weight_ranges_hold_the_corner_with_room_below(family):
         float(w) for w in onp.geomspace(high * n_data, low * n_data, 11)
     )
     starts = reference_starts(data, True, ("flat",))
-    method = "lm" if family == "tsv" else "lbfgs"
+    # Converged fits: the corner of a 200-step L-BFGS curve depends on where
+    # the fits were cut off (starlet: 3e-4 at 200 steps, 0.3 converged).
+    method, steps = ("lm", 200) if family == "tsv" else ("lbfgs", 20_000)
     group = run_group(
         data,
         Draw(0, family, NPIX, SCALE, "flat", weights),
         starts=starts,
         method=method,
-        max_steps=200,
+        max_steps=steps,
+        # a long history keeps the converged fits within the fast-test budget
+        lbfgs_memory=100,
     )
     corner = group.curve.corner() / n_data
     # The whole window below the corner lies inside the range.

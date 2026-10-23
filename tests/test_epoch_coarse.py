@@ -137,3 +137,38 @@ def test_candidate_batch_is_64_for_plain_data_and_shares_the_budget():
     assert _candidate_batch(5, None, [gained], [sg]) == 5
     # mixed epochs: the plain one does not take a share
     assert _candidate_batch(None, 2**22, [plain, gained], [sp, sg]) == one
+
+
+def test_hessian_groups_shrink_with_the_budget_and_sum_to_the_fused_one():
+    from virgil.aliases import _hessian_groups, _Problem
+
+    nights = [_night(True, seed=k, mjd=60000.0 + k) for k in range(3)]
+    surfaces = tuple(_Surface(d) for d in nights)
+    assert _hessian_groups(None, nights, surfaces) == [slice(0, 3)]
+    tiny = _hessian_groups(1, nights, surfaces)
+    assert tiny == [slice(0, 1), slice(1, 2), slice(2, 3)]
+    plain = [_night(False)] * 3
+    sp = tuple(_Surface(d, 10.0) for d in plain)
+    assert _hessian_groups(1, plain, sp) == [slice(0, 3)]
+    from virgil.aliases import _HESSIAN_COPIES
+    from virgil.epochs import _whitening_floats
+
+    two = 2 * 8 * _HESSIAN_COPIES * _whitening_floats(nights[0])
+    assert _hessian_groups(two, nights, surfaces) == [
+        slice(0, 2),
+        slice(2, 3),
+    ]
+    with run_in("float64"):
+        from tests.test_aliases import _settings
+
+        settings = _settings(outlier_eps=0.1, log_broad=(-50.0,) * 3)
+        data = [cast_tree(d, "float64") for d in nights]
+        fused = _Problem(data, settings)
+        chunked = _Problem(data, settings, memory_budget=1)
+        assert fused.mix is not None
+        assert len(fused.hessian_groups) == 1
+        assert len(chunked.hessian_groups) == 3
+        x = np.asarray([onp.log(12.1), 0.3, 0.3, 0.2, 1.0, 1.0, 1.5, -1.0])
+        onp.testing.assert_allclose(
+            chunked.hessian(x), fused.hessian(x), rtol=1e-9, atol=1e-9
+        )

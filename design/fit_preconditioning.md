@@ -183,9 +183,9 @@ Total roughly 1–1.5 weeks; piece 2 carries the risk.
   coordinates (one Jacobian-vector product each, with `lax.map`, never
   materializing `J`), not the 4096 of the NUTS mass: a refresh costs `n` model
   evaluations, so the threshold is lower. Above it, `diag(JᵀJ)` is the mean of
-  `(Jᵀu)²` over 16 Gaussian `u` in *row* space, not Rademacher probes in
-  coordinate space: the estimate is never negative and its relative error is
-  `√(2/probes)` whatever the off-diagonals, which Rademacher's is not; the
+  `(Jᵀu)²` over 16 Rademacher `u` (±1) in *row* space (2026-10-22; they were
+  Gaussian): the estimate is never negative and unbiased, and exact for a
+  diagonal `J`, which the entropy metric's rows nearly are; the
   regularizer's diagonal uses 16 Rademacher Hessian-vector probes. The probe
   keys are fixed, so a fit is reproducible and does not depend on the JAX version.
   The result sets scale only: the optimum does not depend on it.
@@ -392,3 +392,103 @@ the Hutchinson probes are accurate enough (see "Accuracy of the generic diagonal
 path serves OI, DISCO and radio alike. The IM Lup benchmark (float64, with and
 without `precondition`, same step budget, pinned commits) is pending. Newton–CG
 for the entropy term is not started; it waits on the benchmark.
+
+## Entropy metric, LM residuals (2026-10-22)
+
+Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
+
+- A maximum-entropy pixel's curvature in `ln I` is `w·b` (the Skilling–Bryan
+  metric); using it instead of the floored Hessian diagonal gives 1.5–3× fewer
+  L-BFGS steps at weak weights. `MaxEntropy.metric_rows` exposes it as a
+  Gauss–Newton form; probes cost about a third of the gain at 1681
+  coordinates, so the diagonal is now exact up to 4096. *Superseded below:* the
+  cutoff is back at 1024 and the probes are Rademacher.
+- L-BFGS memory 100 helps image fits (the default stays 50 here; see the memory sweep).
+- 41² VLTI-like, memory 50, steps at w = 1e4 … 0.1 (Rademacher probes at
+  1024, one run, laptop under load): float64 18 33 86 300 2919 4527, float32
+  18 31 96 385 2456 19524 (before: 18 50 147 792 4382 12265 and
+  18 52 111 585 4004 20000, not converged). Memory 100 converges both faster
+  (see the memory sweep).
+- `MaxEntropy.residuals` (r = t√(2wqφ(t)), t = (b−q)/q) lets LM fit entropy;
+  it converges every weight in float64 (11–1133 steps) but not in float32, so
+  L-BFGS stays the default for entropy.
+- float32 on AMI 32² still stalls at w ≤ 10 for every variant: the line search
+  meets the noise of the float32 model evaluation (χ² biased 1–4 %); float64
+  master parameters, float64 loss sums, re-centred parameters and a loss
+  offset to the round's reference did not help. float32 is documented as
+  limited at weak weights.
+
+### Ensemble corners at memory 100 (12² AMI grid of `tests/test_ensemble.py`)
+
+Corner (weight per data point) of an 11-weight L-curve, by L-BFGS memory and
+step budget; the ensemble itself runs `fit`'s default 20000 steps, not 200.
+
+| family | range | mem 50, 200 steps | mem 50, converged | mem 100, 200 steps | mem 100, converged |
+| --- | --- | --- | --- | --- | --- |
+| tv | 1e-4 … 10 | 0.32 | 1.0 | 1.0 | 1.0 |
+| maxent | 1e-4 … 10 | 0.32 | 0.32 | 0.32 | 0.32 |
+| starlet | 1e-4 … 10 | 0.1 | 0.32 | **3e-4** | 0.32 |
+| tsv (LM) | 0.1 … 1e4 | – | – | 32 | 32 |
+
+All corners lie in the default ranges once converged, so the ranges are
+unchanged. The corner of a truncated starlet curve is not stable (3e-4 at
+memory 100 and 200 steps), so `test_default_weight_ranges_hold_the_corner_with_room_below`
+now fits to convergence. The starlet corner also moves with the sweep's range
+(converged: 0.32 for 1e-4 … 10, 0.16 for 1e-5, 5e-6 for 1e-6): its L-curve has
+no sharp corner, so a corner at the edge of a sweep is not a corner. Re-deriving
+the ranges on the 60-dataset contest bench needs an OzSTAR job.
+
+## Rademacher probes, exact cutoff back at 1024 (2026-10-22)
+
+The exact diagonal at 4096 removed the probe error on the entropy metric, but
+that error was the Gaussian probes' own: for a nearly diagonal `J`,
+`(Jᵀu)_p² ≈ J_pp² u_p²` has relative variance 2 for Gaussian `u` and 0 for
+Rademacher `u`. So `_gn_diagonal` uses Rademacher probes and `_EXACT_DIAG` is 1024
+again (above it exact costs `n` Jacobian-vector products per refresh, wasted on
+entropy pixels, whose data term is dropped). 41² VLTI-like L-curve, memory 100,
+steps for w = 1e4 → 0.1 (identical χ²):
+
+| dtype | Rademacher, 1024 | Gaussian, exact (4096) |
+|---|---|---|
+| float64 | 18 33 79 236 1348 2837 (15 s) | 17 33 77 317 1453 2877 (18 s) |
+| float32 | 18 31 80 266 1355 3416 (9 s) | 18 32 73 252 1529 2971 (10 s) |
+
+Wall times are one run each on a loaded laptop. Float64 is at least as good;
+float32 is within the line search's run-to-run variation at the last weight.
+
+## L-BFGS memory sweep (2026-10-22)
+
+Steps to converge at the weakest weight (w = 0.1) of the L-curves with
+`precondition="diag"` and `MaxEntropy` (entropy metric, Rademacher probes), by
+L-BFGS memory `m`; `*` is not converged in 20 000. One run each, laptop under
+load; float32 at the weakest weight is noisy (line-search noise floor).
+
+| case | 5 | 10 | 20 | 30 | 50 | 60 | 75 | 100 | 150 | 200 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 41² VLTI-like, float64 | 20000* | 13748 | 17502 | 8999 | 4527 | 4296 | 3695 | 2837 | 2316 | 2644 |
+| 41² VLTI-like, float32 | 20000* | 20000* | 20000* | 20000* | 19524 | 14480 | 7225 | 3416 | 9401 | 9065 |
+| 41² VLTI-like, float64, no `precondition` | 20000* | 20000* | 20000* | 20000* | 20000* | 12597 | 8471 | 6541 | – | – |
+| 32² AMI, float64 | 3072 | 2882 | 2222 | 1546 | 725 | 667 | 724 | 754 | – | – |
+| 32² AMI, float32 | fails at w ≤ 10 for every m | | | | | | | | | |
+
+Wall time follows the steps (41², float64: 39 s at m = 5, 19 s at 50 and
+100). The history is `2·m·n` floats: 2.7 MB at m = 100 for these images, 1.6 GB
+for 10⁶ float64 pixels. Other cases:
+
+- 12² ensemble corner fits (`tv`, `maxent`, `starlet`, 144 coordinates,
+  converged): 547 965 steps (88 s) at m = 20, 269 727 (42 s) at 50, 74 256
+  (19 s) at 100.
+- A 3-parameter binary fit by L-BFGS: 14 steps for every m from 5 to 100.
+- `StarPipeline`, `BinaryPipeline`, `ImagePipeline` and `DiskPipeline` (the
+  test fixtures; `OrbitPipeline` makes no `fit` call): every `fit` is LM, which
+  ignores the memory, so the pipelines do not need a default of their own.
+
+Which cases need more than 50: the 41² image (float64 and float32) and the
+ensemble corner fits; 32² AMI and parametric fits do not (50–60 is as good as
+100). The smallest tested `m` within 10 % of the best everywhere it matters
+is not one number (float64 41² keeps improving to 150, float32 41² is best at
+100, 32² AMI at 60), so the default is 100, with one rule: it is cut so that the
+history stays under 1 GiB (never below 5 steps, with a `UserWarning`), which binds
+only above 6.7 × 10⁵ float64 coordinates (1.3 × 10⁶ in float32); none of the
+cases above is affected.
+An explicit `lbfgs_memory` is used as given.

@@ -220,6 +220,7 @@ class MaxEntropy(_ImageRegulariser):
     """
 
     prior: object
+    prefers_lbfgs = True  # LM converges in float64 only: see ``fit``
 
     def __init__(self, weight, prior=None, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
@@ -227,7 +228,8 @@ class MaxEntropy(_ImageRegulariser):
         self.path = path
         self.smoothed = bool(smoothed)
 
-    def value(self, model):
+    def _brightness_and_default(self, model):
+        """The unit-sum image ``b`` and the default ``q`` (1 where ``b`` is 0)."""
         image = self.image(model)
         b = self.pixels(model)
         if self.prior is None:
@@ -240,8 +242,35 @@ class MaxEntropy(_ImageRegulariser):
             q = inside / np.sum(inside)
         else:
             q = np.asarray(self.prior) / np.sum(self.prior)
-        q = np.where(b > 0.0, q, 1.0)  # 0 log 0 = 0 outside the support
+        return b, np.where(b > 0.0, q, 1.0)  # 0 log 0 = 0 outside the support
+
+    def value(self, model):
+        b, q = self._brightness_and_default(model)
         return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+
+    def residuals(self, model):
+        """Residuals ``r`` with ``value = 0.5 Σ r²`` (``b`` and ``q`` sum to 1):
+        ``r = t √(2 w q φ(t))`` for ``t = (b - q) / q`` and
+        ``φ(t) = ((1 + t) ln(1 + t) - t) / t²``, so that the entropy can be
+        fitted by Levenberg–Marquardt. Zero where ``b`` is."""
+        b, q = self._brightness_and_default(model)
+        inside = b > 0.0
+        t = np.where(inside, (b - q) / q, 0.5)
+        small = np.abs(t) < 1e-2
+        ts = np.where(small, 1.0, t)  # the series covers the small ones
+        phi = np.where(
+            small,
+            0.5 - t / 6.0 + t**2 / 12.0 - t**3 / 20.0,
+            ((1.0 + ts) * np.log1p(ts) - ts) / ts**2,
+        )
+        r = t * np.sqrt(2.0 * self.weight * q * phi)
+        return np.ravel(np.where(inside, r, 0.0))
+
+    def metric_rows(self, model):
+        """Rows whose JᵀJ is the curvature ``w b`` of the entropy in
+        ``ln b`` (the Skilling–Bryan metric): a positive Gauss–Newton form."""
+        b = self.pixels(model)
+        return np.ravel(2.0 * np.sqrt(self.weight * np.maximum(b, 1e-30)))
 
 
 class Laplacian(_ImageRegulariser):
