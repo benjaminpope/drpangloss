@@ -96,6 +96,17 @@ print(f"one star: converged {single_fit.info['converged']}, chi2 per point {sing
 one star: converged True, chi2 per point 0.938, image flux 0.443 (ring truth 0.35)
 ```
 
+Draws from the prior alone: the ring template broken into knots and gaps about 1.5 mas across, which the data must confirm or erase. Below, cuts through 100 draws, one in bold.
+
+```python
+from virgil.plotting import plot_field_draws
+
+plot_field_draws(gp_image().log_brightness, scale, jax.random.PRNGKey(0), n=300, title="GP prior about the ring template, σ = 2, length 1.5 mas")
+plt.show()
+```
+
+![imaging_composite output 6.1](generated/imaging_composite_cell006_out01.png)
+
 ## Finding the companion
 
 The companion is unresolved but not at the origin, so its signature is real closure phase. With no companion in the model, the image reproduces that signal with a compact knot of bright pixels, and the brightest pixel gives a starting position for the companion. The binary model then adds a second `PointSource` with its flux and offset free, and fits it together with the image.
@@ -155,7 +166,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![imaging_composite output 8.1](generated/imaging_composite_cell008_out01.png)
+![imaging_composite output 10.1](generated/imaging_composite_cell010_out01.png)
 
 ## Which model do the data prefer?
 
