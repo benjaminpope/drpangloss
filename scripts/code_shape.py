@@ -24,7 +24,9 @@ def (module-level, nested or method) that the tree adds relative to ``REF``
 and that is called exactly once in the package, and exits 1 if there is any.
 Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above;
 jit / custom_jvp / custom_vjp / ``.defjvp`` / ``.defvjp`` / ``.register``
-decorators; a def referenced as a value (a callback); a name used in tests/.
+decorators; a def referenced as a value (a callback); a name tests import or take as an attribute
+(``tests/lint`` excluded). Calls count in the defining module plus other modules
+that import the name or call it as ``mod._name``.
 """
 
 import argparse
@@ -204,7 +206,7 @@ def _shingles(body):
 
 
 _EXEMPT_DECORATOR = re.compile(
-    r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)$|\.register$"
+    r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)(\(.*\))?$|\.register(\(.*\))?$"
 )
 
 
@@ -228,56 +230,105 @@ def _private_defs(tree):
     return out
 
 
-def _uses(trees):
-    """Per name: calls, and references as a value (a callback, ``f.defjvp(g)``)."""
-    calls, values = collections.Counter(), collections.Counter()
-    for tree in trees:
-        called = set()
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Call):
-                called.add(id(n.func))
-                f = n.func
-                calls[
-                    f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
-                ] += 1
-        for n in ast.walk(tree):
-            if id(n) in called:
-                continue
-            if isinstance(n, ast.Name):
-                values[n.id] += 1
-            elif isinstance(n, ast.Attribute):
-                values[n.attr] += 1
-    return calls, values
+def _module_uses(tree):
+    """Uses in one module: calls and value references, by plain name or attribute.
+
+    Attributes on ``self``/``cls`` stay in the module (``own``); others may
+    refer to another module's function (``ext``).
+    """
+    u = {k: collections.Counter() for k in ("name", "ext", "own")}
+    uv = {k: collections.Counter() for k in ("name", "ext", "own")}
+    called = set()
+
+    def add(table, n):
+        if isinstance(n, ast.Name):
+            table["name"][n.id] += 1
+        elif isinstance(n, ast.Attribute):
+            own = isinstance(n.value, ast.Name) and n.value.id in {
+                "self",
+                "cls",
+            }
+            table["own" if own else "ext"][n.attr] += 1
+
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            called.add(id(n.func))
+            add(u, n.func)
+    for n in ast.walk(tree):
+        if id(n) not in called:
+            add(uv, n)
+    imported = {
+        al.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom)
+        for al in n.names
+    }
+    return u, uv, imported
+
+
+def _reach(table, name, own, imported):
+    """Uses of ``name`` in a module: all of them if it defines ``name``, else
+    only those that can reach it (an import, or an attribute of a module)."""
+    if own:
+        return sum(table[k][name] for k in table)
+    return table["ext"][name] + (table["name"][name] if imported else 0)
+
+
+def _test_names(tests_text):
+    """Names tests import or take as attributes (``mod._name``), not locals."""
+    names = set()
+    for n in ast.walk(ast.parse(tests_text)):
+        if isinstance(n, ast.ImportFrom):
+            names.update(al.name for al in n.names)
+        elif isinstance(n, ast.Attribute):
+            names.add(n.attr)
+    return names
 
 
 def find_single_use(head, base, tests_text=""):
     """Private defs in ``head`` (``{path: source}``) absent from ``base``, called once.
 
-    Returns ``["path:line qualname", ...]``. See the module docstring for the
-    exemptions.
+    Calls are counted in the defining module plus those that can reach it from
+    other modules (an import of the name, or ``mod.name``). A def is new when
+    its qualified name is not in the same module of ``base`` (nor, for a module
+    absent from ``base``, in any), so moving a module is not an addition. Returns ``["path:line qualname", ...]``; see the module docstring
+    for the exemptions.
     """
     trees = {p: ast.parse(t) for p, t in head.items()}
     old = {
         (p, q) for p, t in base.items() for q, _ in _private_defs(ast.parse(t))
     }
-    calls, values = _uses(trees.values())
+    moved = {q for _, q in old}
+    uses = {p: _module_uses(t) for p, t in trees.items()}
+    tested = _test_names(tests_text)
     found = []
     for path, tree in trees.items():
         lines = head[path].splitlines()
         for q, node in _private_defs(tree):
             name = node.name
-            if (path, q) in old or calls[name] != 1 or values[name]:
+            if (path, q) in old or name in tested:
+                continue
+            if path not in base and q in moved:  # a moved module
+                continue
+            counts = [
+                (
+                    _reach(u, name, m == path, name in imp),
+                    _reach(uv, name, m == path, name in imp),
+                )
+                for m, (u, uv, imp) in uses.items()
+            ]
+            if sum(c for c, _ in counts) != 1 or sum(v for _, v in counts):
                 continue
             if any(
                 _EXEMPT_DECORATOR.search(ast.unparse(d))
                 for d in node.decorator_list
             ):
                 continue
-            here = lines[node.lineno - 1 : node.lineno]
-            above = lines[node.lineno - 2 : node.lineno - 1]
-            if any("# deliberate:" in x for x in here + above):
-                continue
-            if re.search(rf"\b{re.escape(name)}\b", tests_text):
+            top = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            near = (
+                lines[top - 2 : top - 1] + lines[node.lineno - 1 : node.lineno]
+            )
+            if any("# deliberate:" in x for x in near):
                 continue
             found.append(f"{path}:{node.lineno} {q}")
     return found
@@ -318,7 +369,9 @@ def main():
     a = ap.parse_args()
     if a.since:
         tests = "\n".join(
-            p.read_text() for p in (ROOT / "tests").rglob("*.py")
+            p.read_text()
+            for p in (ROOT / "tests").rglob("*.py")
+            if "lint" not in p.parts
         )
         found = find_single_use(_read_tree(), _read_tree(a.since), tests)
         print(f"single-use private defs added since {a.since}: {len(found)}")
