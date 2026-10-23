@@ -1475,12 +1475,13 @@ def _warn_double_taper(scene, nuisance):
 
 class _Precompute:
     """The builder of a term's Toeplitz form, carried through ``jit`` as a
-    static field. All instances compare equal, so a new term of the same
-    shapes (another mask, say) does not recompile."""
+    static field. Never read it inside a jitted function."""
 
     def __init__(self, build):
         self.build = build
 
+    # deliberate: read only by ``resolve``, outside jit, so always equal: a new
+    # mask must not retrace, and the term jit sees carries only arrays.
     def __eq__(self, other):
         return isinstance(other, _Precompute)
 
