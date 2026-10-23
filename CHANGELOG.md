@@ -9,6 +9,10 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- The README development-carbon badge is now a shields.io endpoint badge reading
+  `generated/dev_carbon_badge.json` on the docs site, so the PyPI README shows
+  the current figure, not the one frozen at release. `scripts/dev_carbon.py`
+  writes both.
 - **`virgil.radio_toeplitz`** (provisional): `ComplexVisData.toeplitz`
   precomputes the dirty beams and images of a one-`Image` radio fit, after
   Fessler et al. (2005). Its `term` gives the loss, gradient, profiled `ŝ` and
