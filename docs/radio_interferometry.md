@@ -81,7 +81,7 @@ offset. Each ddid label `d` has an error scale `s_d` multiplying its errors, fit
 with the Jeffreys prior `1/s` (or profiled out, below). The spectral index `α` has the prior
 `Uniform(0, 5)` by default, which excludes the falling spectra of
 synchrotron or free-free sources: pass `priors(alpha=(-3, 5))` for those, or
-`alpha=False` to fix it at 0. `CalibrationNuisance` holds this configuration
+`alpha=False` to fix it at 0 (or `alpha=2.0` at that value). `CalibrationNuisance` holds this configuration
 and the default priors:
 
 ```python
@@ -309,6 +309,80 @@ side of a cell edge can still fall in different folds, so scores can be
 slightly optimistic). Fit with
 `term(..., mask=fold != i)` and score the held-out points with
 `chi2_by_ddid(..., mask=fold == i)`.
+
+## Toeplitz χ² {#toeplitz-chi2}
+
+When the scene is one [`Image`][virgil.models.Image], the χ² of each ddid
+`d` (observation `e`) is a quadratic in the pixels,
+
+`χ²_d = (C_d − 2 G_e Iᵀ D_d(δ_e) + G_e² Iᵀ B_d I) / s_d²`,
+
+with `G_e = F g_e`, `C_d = Σ w|V|²`, the dirty image `D_d` at the
+observation's offset `δ_e` and the dirty beam `B_d`, a Toeplitz matrix
+applied by FFT on a 2N × 2N grid (Fessler et al. 2005). Precompute them once
+and an evaluation costs a few FFTs of the image, whatever the number of
+visibilities:
+
+```python
+import jax
+
+jax.config.update("jax_enable_x64", True)  # float64 is required
+
+nuis = CalibrationNuisance(data, ref_obs=0, alpha=False, offsets=False)  # or alpha=2.0
+tdata = data.toeplitz(Image(init["log_brightness"], pixel_scale_mas=2.0), nuis)
+term = tdata.term(scene, nuis)
+result = fit(model, priors, data=(), likelihoods=[term], init=init,
+             method="lbfgs", precondition="diag")
+```
+
+The term has the loss, gradient, profiled `ŝ` and `info["derived"]` of
+`data.term(scene, nuis)` for the same points, but no residual vector: fit
+with `"lbfgs"` or `"adam"` (`"lm"`, `gauss_newton_mass` and the Gauss–Newton
+covariance raise `NoLeastSquaresForm`). With `precondition="diag"` the pixel,
+flux and gain diagonal is the exact Gauss–Newton one of the direct term; the
+offsets and error scales take the diagonal of the loss Hessian.
+
+- **What it covers.** Per-observation gains, the flux, the nuisance taper, `Image(smooth_fwhm_mas=...)`, a mask, and fixed, fitted or
+  profiled error scales. The image layout (shape, pixel scale, rotation,
+  smoothing) is fixed at the precompute; the scene must return that layout,
+  alone or as the only part of a `System`, at the template's `dra`, `ddec`
+  (a fixed shift, folded into the visibilities at the precompute).
+- **What it refuses.** A fitted spectral index (pass `alpha=False` or a
+  number), antenna gains, other components, float32, and fitted offsets
+  unless asked for (below).
+- **Checks.** `tdata.crosscheck(scene, values, nuis)` compares the χ² per
+  ddid and the loss with the direct term; `tdata.direct_term(scene, nuis)` is
+  that term. They agree to about 1e-13 of the loss.
+- **New weights.** `tdata.rebuild(vis, weight)` repeats the precompute for
+  new visibilities or weights without recompiling (bootstraps, reweighting).
+  Weights must stay finite and positive; drop points through `mask` instead.
+
+**Fitted offsets** (`offsets="spread"`, an extension). The
+offset ramp `e^{−2πi u·δ_e}` cancels in `|M|²`, so `B_d` does not depend on
+the offsets and only `D_d` moves. `tdata` stores each ddid's type-1 spread
+grid `b` (nufftax's exponential-of-semicircle kernel `ψ`, Barnett et al.
+2019), and Poisson summation gives the dirty image at any real position,
+
+`D(x + δ) = Σ_l b_l e^{2πil(x+δ)/n_f} / ψ̂(x + δ)`,
+
+a phase ramp on the stored grid divided by the kernel's transform at a
+non-integer position (by quadrature, as in a type-3 NUFFT; Lee & Greengard
+2005). It is exact to the kernel tolerance while no point's kernel wraps,
+`max |t| ≤ π(1 − w/n_f)`, with `t` the baseline in radians per pixel. This
+builds on type-3 NUFFT evaluation; we know of no prior use of this
+combination, so it is opt-in:
+
+```python
+nuis = CalibrationNuisance(data, ref_obs=0, alpha=False)  # offsets fitted
+tdata = data.toeplitz(template, nuis, offsets="spread")
+```
+
+It refuses baselines past `tdata.margin` of the pixel Nyquist limit
+(`tdata.nyquist_fraction` is `max |t|/π`; use smaller pixels or mask the
+longest baselines), and offsets beyond the precompute's bound
+(`max_offset_mas`, by default that of `nuis.priors()`) raise at run time.
+Without it, `B_d` and `D_d` need only integer lags and are exact at any
+baseline.
 
 ## Diagnostics
 

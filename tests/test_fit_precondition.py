@@ -198,9 +198,9 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     onp.testing.assert_allclose(
         scaled.model.env.brightness, plain.model.env.brightness, atol=1e-2
     )
-    # The softmax gauge does not drift: the mean log-brightness stays at its start.
-    mean = float(np.mean(scaled.values["env.log_brightness"]))
-    assert abs(mean) < 1e-6
+    # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
+    x = scaled.values["env.log_brightness"]
+    assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-5)
 
 
 def test_lm_ignores_the_option_and_bad_values_are_rejected():
@@ -297,6 +297,136 @@ def test_probes_are_redrawn_each_round_and_a_new_round_does_not_recompile():
             True,
         )
     assert _lbfgs_run._cached._cache_size() - before <= 1
+
+
+def _gauge_problem(npix=8):
+    """An image-only scene whose TSV optimum has dark pixels (an l_curve point)."""
+    truth = Image.from_brightness(
+        gaussian_blob(npix, 12.0, 25.0, dra=20.0)
+        + 0.3 * gaussian_blob(npix, 12.0, 3.0, dra=-30.0),
+        12.0,
+    )
+    data = OIData(ami_grid_record(pitch_m=0.5)).with_model(
+        truth, key=jax.random.PRNGKey(1)
+    )
+    start = Image(np.zeros((npix, npix)), 12.0)
+    return start, image_priors(start), data
+
+
+def _lit(x, fraction):
+    """Pixels brighter than ``fraction`` of the brightest. The gradient in a
+    pixel's ``log_brightness`` is proportional to its flux, so a stopped fit
+    fixes it only as well as ``gtol / flux``: a pixel at 1e-9 of the peak is
+    uncertain by 1e-2 in log, and a darker one is a boundary optimum at -inf."""
+    return onp.exp(x - x.max()) > fraction
+
+
+def test_recentring_changes_no_loss_and_fixes_the_log_flux():
+    from virgil.fitting import _recentre
+
+    start, priors, data = _gauge_problem()
+    key = "log_brightness"
+    x = onp.random.default_rng(0).normal(size=(8, 8))
+    x[0, :3] = -500.0  # dark pixels are left where they are
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+        )
+        z = {key: np.asarray(x + 1e5)}
+        out = _recentre(problem, z)[key]
+        assert float(jax.nn.logsumexp(out)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.max(out)) < 0.0
+        onp.testing.assert_allclose(
+            out - out[3, 3], z[key] - z[key][3, 3], atol=1e-9
+        )
+        assert float(problem.loss({key: out})) == pytest.approx(
+            float(problem.loss(z)), rel=1e-12
+        )
+        # A pixel at -inf (no flux) stays there.
+        x[3, 3] = -onp.inf
+        out = _recentre(problem, {key: np.asarray(x)})[key]
+        assert float(jax.nn.logsumexp(out)) == pytest.approx(0.0, abs=1e-12)
+        assert out[3, 3] == -onp.inf and onp.isfinite(out[0, 0])
+
+
+def test_lm_sees_the_gauge_direction_through_one_extra_residual():
+    # fit recentres its result, so only the residuals LM steps on can show that
+    # its own half works: the data do not see a constant added to the pixels
+    # (their Jacobian times ones is 0), and the gauge row alone does.
+    from virgil.fitting import _gauge_masks, _lm_residuals
+
+    start, priors, data = _gauge_problem()
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+        )
+        masks = _gauge_masks(problem)
+        z = {
+            "log_brightness": np.asarray(
+                onp.random.default_rng(0).normal(size=(8, 8)) - 4.0
+            )
+        }
+        args = (problem, np.asarray(10.0), masks)
+        n = len(_lm_residuals(z, args)) - 1
+        ones = {"log_brightness": np.ones((8, 8))}
+        along = jax.jvp(lambda z: _lm_residuals(z, args), (z,), (ones,))[1]
+        scale = float(np.max(np.abs(_lm_residuals(z, args)[:n])))
+        assert float(np.max(np.abs(along[:n]))) < 1e-9 * scale
+        assert float(along[n]) == pytest.approx(1.0, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "method, precondition",
+    [("lm", None), ("lbfgs", None), ("lbfgs", "diag"), ("adam", "diag")],
+)
+def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
+    method, precondition
+):
+    # LM left the lit pixels 4e5 apart from zero here, set by rounding; the
+    # fit must be at log of the fluxes, and a start shifted by 1e5 must give
+    # the same lit pixels as an unshifted one.
+    start, priors, data = _gauge_problem()
+    options = dict(
+        method=method,
+        precondition=precondition,
+        max_steps=300 if method != "lm" else None,
+    )
+    warm = None
+    for weight in (1e3, 3e2, 1e2):
+        result = fit(start, priors, data, [TSV(weight)], init=warm, **options)
+        x = onp.asarray(result.values["log_brightness"])
+        assert onp.all(onp.isfinite(x))
+        assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-9)
+        assert x[_lit(x, 1e-8)].min() > -25.0  # ln(1e-8 / 64 pixels) is -22.6
+        onp.testing.assert_allclose(
+            result.model.brightness,
+            jax.nn.softmax(x.ravel()).reshape(x.shape),
+            atol=1e-12,
+        )
+        warm = result.values
+    if method != "lm":  # the others stop unconverged, and may amplify 1e-11
+        return
+    base = onp.asarray(result.values["log_brightness"], float)
+    runs = [
+        fit(
+            start,
+            priors,
+            data,
+            [TSV(1e2)],
+            init={"log_brightness": b},
+            **options,
+        )
+        for b in (base, base + 1e5)
+    ]
+    assert runs[1].info["loss"] == pytest.approx(
+        runs[0].info["loss"], rel=1e-6
+    )
+    x0, x1 = (onp.asarray(r.values["log_brightness"]) for r in runs)
+    lit = _lit(x0, 1e-3)
+    onp.testing.assert_allclose(x1[lit], x0[lit], atol=1e-4)
+    onp.testing.assert_allclose(
+        runs[1].model.brightness, runs[0].model.brightness, atol=1e-7
+    )
 
 
 def _l_curve_steps(dtype, npix=41):

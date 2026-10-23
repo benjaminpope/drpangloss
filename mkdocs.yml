@@ -143,6 +143,7 @@ nav:
       - Epochs: api/epochs.md
       - Orbit Search: api/orbit_search.md
       - Radio: api/radio.md
+      - Radio Toeplitz: api/radio_toeplitz.md
       - Radio CLEAN: api/radio_clean.md
       - Cross-validation: api/crossval.md
       - Fields: api/fields.md

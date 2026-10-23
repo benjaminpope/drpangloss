@@ -1490,3 +1490,47 @@ used_in = ["virgil.radio:CalibrationNuisance"]
 note = "A&A 627, A134 (2019); joint calibration and imaging (resolve), gain priors"
 verified = true
 verified_via = "arxiv"
+
+[ref.fessler2005]
+authors = "Fessler et al."
+year = 2005
+title = "Toeplitz-based iterative image reconstruction for MRI with correction for magnetic field inhomogeneity"
+doi = "10.1109/TSP.2005.853152"
+used_in = ["virgil.radio_toeplitz:ToeplitzVisData"]
+note = "IEEE Trans. Signal Process. 53, 3393; the Toeplitz embedding of the normal operator AᴴWA on a 2N grid"
+bibcode = "2005ITSP...53.3393F"
+verified = true
+verified_via = "crossref"
+
+[ref.barnett2019]
+authors = "Barnett et al."
+year = 2019
+title = "A parallel nonuniform fast Fourier transform library based on an \"exponential of semicircle\" kernel"
+arxiv = "1808.06736"
+doi = "10.1137/18M120885X"
+used_in = ["virgil._nufft_spread:evaluate", "virgil.radio_toeplitz:ToeplitzVisData"]
+note = "SIAM J. Sci. Comput. 41, C479 (FINUFFT); the ES kernel, and ψ̂ at non-integer frequencies by quadrature (Sect. 3.3)"
+bibcode = "2019SJSC...41C.479B"
+verified = true
+verified_via = "crossref"
+
+[ref.nufftax]
+authors = "Oudoumanessah & Iollo"
+title = "nufftax"
+url = "https://github.com/GragasLab/nufftax"
+repo = "https://github.com/GragasLab/nufftax"
+verified = false
+verified_via = "none"
+used_in = ["virgil._nufft_spread:spread", "virgil.radio_toeplitz:ToeplitzVisData"]
+note = "no paper; its spreader and kernel parameters (private API, nufftax >= 0.6.1)"
+
+[ref.leegreengard2005]
+authors = "Lee & Greengard"
+year = 2005
+title = "The type 3 nonuniform FFT and its applications"
+doi = "10.1016/j.jcp.2004.12.004"
+bibcode = "2005JCoPh.206....1L"
+used_in = ["virgil._nufft_spread:evaluate", "virgil.radio_toeplitz:ToeplitzVisData"]
+note = "J. Comput. Phys. 206, 1; a type-1 spread grid evaluated off the integer lattice (the free offsets)"
+verified = true
+verified_via = "ads"

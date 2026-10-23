@@ -458,6 +458,61 @@ class ComplexVisData(eqx.Module):
             )
         return _RadioTerm(self, scene, nuisance, mask, chunk_size, sigma)
 
+    def toeplitz(
+        self,
+        image,
+        nuisance,
+        mask=None,
+        offsets="none",
+        eps=1e-14,
+        max_offset_mas=None,
+        chunk_size=65536,
+    ):
+        """Precompute the dirty beams and images of a one-Image fit.
+
+        Returns a [`ToeplitzVisData`][virgil.radio_toeplitz.ToeplitzVisData],
+        whose ``term`` gives the χ² of ``term`` for a scene that is one
+        [`Image`][virgil.models.Image] with the layout of ``image``, at a
+        cost independent of the number of points. Provisional.
+
+        Parameters
+        ----------
+        image : Image
+            The layout (shape, ``pixel_scale_mas``, ``rotation_deg``,
+            ``smooth_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
+            the visibilities); its pixels are not used.
+        nuisance : CalibrationNuisance
+            Its taper, ``nu0_hz`` and fixed ``alpha`` are folded in;
+            antenna gains and a fitted ``alpha`` are refused.
+        mask : (N,) bool, optional
+            Points to use (default all).
+        offsets : {"none", "spread"}, optional
+            ``"none"`` (default) needs ``CalibrationNuisance(offsets=False)``.
+            ``"spread"`` fits the offsets by evaluating the stored spread
+            grids at shifted positions (an extension: see the guide), and
+            refuses baselines past its Nyquist margin.
+        eps : float, optional
+            Tolerance of the spreading kernel.
+        max_offset_mas : float, optional
+            Largest offset of any observation, in mas (default the bound
+            of ``nuisance.priors()``).
+        chunk_size : int, optional
+            Points spread at a time, bounding memory.
+        """
+        # Imported here: radio_toeplitz imports this module.
+        from .radio_toeplitz import ToeplitzVisData
+
+        return ToeplitzVisData(
+            self,
+            image,
+            nuisance,
+            mask,
+            offsets,
+            eps,
+            max_offset_mas,
+            chunk_size,
+        )
+
     def sigma_hat(self, scene, values, nuisance, mask=None):
         """The error scales ``s_d`` per ddid at ``values``: the profiled ``ŝ``
         of ``CalibrationNuisance(sigmas="profile")``, the fitted ``cal.sigma``
@@ -468,16 +523,19 @@ class ComplexVisData(eqx.Module):
         term = self.term(scene, nuisance, mask=mask)
         return onp.asarray(term.sigma_hat(values))
 
-    def chi2_by_ddid(self, scene, values, nuisance, mask=None):
+    def chi2_by_ddid(
+        self, scene, values, nuisance, mask=None, chunk_size=10_000_000
+    ):
         """χ² of the data with the σ scales applied, per ddid.
 
         Returns ``(chi2, n)``: float64 arrays of length ``n_ddid``, ``n`` the
         number of unmasked points of each ddid (χ² sums two terms per point).
+        ``chunk_size`` is that of [`term`][virgil.radio.ComplexVisData.term].
         """
         if isinstance(scene, SourceModel):
             model = scene
             scene = lambda values: model  # noqa: E731
-        term = self.term(scene, nuisance, mask=mask)
+        term = self.term(scene, nuisance, mask=mask, chunk_size=chunk_size)
         r2 = term._r2(values)
         mask_ = (
             onp.ones(len(self), dtype=bool)
@@ -1066,7 +1124,7 @@ class CalibrationNuisance:
     ``cal.gain``     ``(n_obs-1,)``    Jeffreys ``1/g``            1
     ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
     ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
-    ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
+    ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0 (or ``alpha``)
     ===============  ================  ==========================  =============
 
     With ``fit_gain_widths``, scalar sites ``cal.gain_amp_width`` and
@@ -1081,12 +1139,14 @@ class CalibrationNuisance:
     data : ComplexVisData
     ref_obs : int
         Index of the reference observation.
-    gains, offsets, sigmas, alpha : bool
+    gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
         Which nuisances are fitted (the flux always is). Gains and offsets
         need more than one observation; a nuisance not fitted takes the value
         in the table's last column. ``sigmas="profile"`` sets the error
         scales at every evaluation instead of fitting them (see
-        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]).
+        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
+        for ``alpha`` fixes the spectral index at that value (a non-zero
+        integer is refused: ``alpha=1`` used to mean "fit").
     offset_beams : float, optional
         Half-width of the default offset prior, in beams; default 3.
         Provisional, as the module.
@@ -1145,7 +1205,16 @@ class CalibrationNuisance:
             self.sigmas = "profile"
         else:
             self.sigmas = bool(sigmas)
-        self.alpha = bool(alpha)
+        if isinstance(alpha, (bool, onp.bool_)):
+            self.alpha, self.alpha_fixed = bool(alpha), 0.0
+        elif isinstance(alpha, (int, onp.integer)) and alpha != 0:
+            # alpha=1 used to fit α (bool(1)); refuse rather than fix it
+            raise ValueError(
+                "alpha must be True or False (fit it or not) or a float to "
+                f"fix it (alpha={float(alpha)!r}), not the integer {alpha}."
+            )
+        else:
+            self.alpha, self.alpha_fixed = False, float(alpha)
         w = onp.asarray(data.weight, dtype=onp.float64)
         if nu0_hz is None:
             nu0_hz = float(onp.sum(w * onp.asarray(data.freq)) / onp.sum(w))
@@ -1328,7 +1397,7 @@ class CalibrationNuisance:
             if self.sigmas is True
             else np.ones(self.n_ddid)  # profiled: set by the term
         )
-        alpha = values[site("alpha")] if self.alpha else 0.0
+        alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
         return values[site("flux")], gain, offset, sigma, alpha
 
     def _taper(self, u, v):
