@@ -1,6 +1,6 @@
 {
  "repo": "benjaminpope/virgil",
- "generated": "2026-10-22T11:50+11:00",
+ "generated": "2026-10-23T20:14+11:00",
  "archived": {
   "copilot": {
    "n": 17,
@@ -30,18 +30,18 @@
   }
  },
  "first_day": "2026-03-03",
- "last_day": "2026-10-22",
+ "last_day": "2026-10-23",
  "total": {
-  "n": 12208,
+  "n": 14077,
   "kwh": [
-   528.6479472758548,
-   610.1461336499441,
-   944.238582369232
+   555.0285591059179,
+   643.1015184152714,
+   994.7644497368437
   ],
   "kg": [
-   289.6491002692647,
-   317.12383470523804,
-   441.7712697134755
+   298.5010551097521,
+   328.2326736422382,
+   458.6780596551328
   ]
  },
  "by_source": {
@@ -59,29 +59,29 @@
    ]
   },
   "claude": {
-   "n": 653,
+   "n": 746,
    "kwh": [
-    224.33417895210877,
-    280.4947447507221,
-    505.13700794517564
+    247.04600604022167,
+    307.59919248940287,
+    549.811938286128
    ],
    "kg": [
-    74.02634336684584,
-    92.55834480730414,
-    166.6863505691371
+    81.52084785281637,
+    101.50233704444179,
+    181.4282938109435
    ]
   },
   "gha": {
-   "n": 8113,
+   "n": 9889,
    "kwh": [
-    17.881435629833394,
-    28.51496916455608,
-    28.51496916455608
+    21.55022037176427,
+    34.36590619120973,
+    34.36590619120973
    ],
    "kg": [
-    6.616131183038385,
-    10.550538590885875,
-    10.550538590885875
+    7.97358153755272,
+    12.715385290747555,
+    12.715385290747555
    ]
   },
   "copilot": {
@@ -126,16 +126,16 @@
    ]
   },
   "dev": {
-   "n": 9671,
+   "n": 11540,
    "kwh": [
-    257.99698396574735,
-    338.9406802683676,
-    637.1149075984745
+    284.37759579581405,
+    371.8960650336945,
+    687.640774966086
    ],
    "kg": [
-    89.70432560511448,
-    116.85272071637606,
-    215.24778606427267
+    98.55628044560179,
+    127.96155965337603,
+    232.15457600593004
    ]
   },
   "science": {
@@ -167,29 +167,29 @@
    ]
   },
   "Claude Code|model calls": {
-   "n": 653,
+   "n": 746,
    "kwh": [
-    224.33417895210877,
-    280.4947447507221,
-    505.13700794517564
+    247.04600604022167,
+    307.59919248940287,
+    549.811938286128
    ],
    "kg": [
-    74.02634336684584,
-    92.55834480730414,
-    166.6863505691371
+    81.52084785281637,
+    101.50233704444179,
+    181.4282938109435
    ]
   },
   "GitHub Actions CI|CI": {
-   "n": 8113,
+   "n": 9889,
    "kwh": [
-    17.881435629833394,
-    28.51496916455608,
-    28.51496916455608
+    21.55022037176427,
+    34.36590619120973,
+    34.36590619120973
    ],
    "kg": [
-    6.616131183038385,
-    10.550538590885875,
-    10.550538590885875
+    7.97358153755272,
+    12.715385290747555,
+    12.715385290747555
    ]
   },
   "OzSTAR/NT Slurm jobs|CPU job": {
@@ -273,16 +273,16 @@
    ]
   },
   "claude|Claude Opus": {
-   "n": 330,
+   "n": 344,
    "kwh": [
-    180.04634248336188,
-    226.8883742270831,
-    414.2565012019677
+    192.69723187331994,
+    241.93111627612782,
+    438.86665388735975
    ],
    "kg": [
-    59.412134311746556,
-    74.86918299714397,
-    136.6973777387336
+    63.586705865004795,
+    79.83302396557347,
+    144.8182963678483
    ]
   },
   "slurm|contest-advice": {
@@ -312,16 +312,16 @@
    ]
   },
   "claude|Claude Sonnet": {
-   "n": 308,
+   "n": 387,
    "kwh": [
-    44.099723985518956,
-    53.39752408302239,
-    90.58872447303597
+    54.16066168367395,
+    65.45922977265838,
+    110.65350212859592
    ],
    "kg": [
-    14.552135235853097,
-    17.62024614872928,
-    29.892689800233935
+    17.87206816856533,
+    21.600397417437396,
+    36.513714412925694
    ]
   },
   "slurm|contest-camp": {
@@ -338,16 +338,16 @@
    ]
   },
   "gha|automated tests": {
-   "n": 1503,
+   "n": 1733,
    "kwh": [
-    17.25693577808332,
-    27.51900203502778,
-    27.51900203502778
+    20.797388518680577,
+    33.16527089368058,
+    33.16527089368058
    ],
    "kg": [
-    6.385066237890836,
-    10.182030752960282,
-    10.182030752960282
+    7.695033751911808,
+    12.27115023066182,
+    12.27115023066182
    ]
   },
   "slurm|wrv_run": {
@@ -520,16 +520,42 @@
    ]
   },
   "gha|lint": {
-   "n": 1434,
+   "n": 1666,
    "kwh": [
-    0.16448926305555542,
-    0.26233297833333297,
-    0.26233297833333297
+    0.20648067422222263,
+    0.32930228533333306,
+    0.32930228533333306
    ],
    "kg": [
-    0.06086102733055517,
-    0.09706320198333344,
-    0.09706320198333344
+    0.07639784946222168,
+    0.12184184557333357,
+    0.12184184557333357
+   ]
+  },
+  "gha|claude review": {
+   "n": 2926,
+   "kwh": [
+    0.18267155855555467,
+    0.291330711333325,
+    0.291330711333325
+   ],
+   "kg": [
+    0.06758847666555369,
+    0.10779236319333171,
+    0.10779236319333171
+   ]
+  },
+  "gha|Documentation (Zensical)": {
+   "n": 1256,
+   "kwh": [
+    0.153168120166667,
+    0.24427764100000077,
+    0.24427764100000077
+   ],
+   "kg": [
+    0.05667220446166642,
+    0.09038272716999987,
+    0.09038272716999987
    ]
   },
   "copilot|Copilot code review": {
@@ -556,32 +582,6 @@
     0.05226395007111103,
     0.08335229562666642,
     0.08335229562666642
-   ]
-  },
-  "gha|claude review": {
-   "n": 2046,
-   "kwh": [
-    0.13409382661111197,
-    0.21385731966666022,
-    0.21385731966666022
-   ],
-   "kg": [
-    0.049614715846110075,
-    0.07912720827666646,
-    0.07912720827666646
-   ]
-  },
-  "gha|Documentation (Zensical)": {
-   "n": 1026,
-   "kwh": [
-    0.12564154233333363,
-    0.20037733400000068,
-    0.20037733400000068
-   ],
-   "kg": [
-    0.046487370663333104,
-    0.07413961357999983,
-    0.07413961357999983
    ]
   },
   "slurm|lbfgs-mwe-diag": {
@@ -727,6 +727,19 @@
     0.02888690116475694
    ]
   },
+  "gha|ozstar-sync": {
+   "n": 910,
+   "kwh": [
+    0.04060278716666663,
+    0.06475468300000005,
+    0.06475468300000005
+   ],
+   "kg": [
+    0.015023031251666567,
+    0.023959232710000007,
+    0.023959232710000007
+   ]
+  },
   "vscode_copilot|mai-code-1.1-flash": {
    "n": 5,
    "kwh": [
@@ -738,19 +751,6 @@
     0.01959753008318,
     0.01959753008318,
     0.06167878032714999
-   ]
-  },
-  "gha|ozstar-sync": {
-   "n": 713,
-   "kwh": [
-    0.031533336666666516,
-    0.05029042,
-    0.05029042
-   ],
-   "kg": [
-    0.011667334566666637,
-    0.0186074554,
-    0.0186074554
    ]
   },
   "slurm|bench-ft": {
@@ -806,16 +806,16 @@
    ]
   },
   "gha|Dependency Graph": {
-   "n": 40,
+   "n": 44,
    "kwh": [
-    0.013471581444444446,
-    0.021484928666666674,
-    0.021484928666666674
+    0.014344293055555558,
+    0.02287675833333334,
+    0.02287675833333334
    ],
    "kg": [
-    0.004984485134444442,
-    0.007949423606666665,
-    0.007949423606666665
+    0.005307388430555552,
+    0.008464400583333333,
+    0.008464400583333333
    ]
   },
   "slurm|stage6d-gains": {
@@ -871,16 +871,16 @@
    ]
   },
   "gha|copilot-setup-steps": {
-   "n": 18,
+   "n": 19,
    "kwh": [
-    0.0012632621111111112,
-    0.002014692666666666,
-    0.002014692666666666
+    0.0013500511111111113,
+    0.002153106666666666,
+    0.002153106666666666
    ],
    "kg": [
-    0.0004674069811111111,
-    0.0007454362866666664,
-    0.0007454362866666664
+    0.000499518911111111,
+    0.0007966494666666663,
+    0.0007966494666666663
    ]
   },
   "slurm|matisse_explore": {
@@ -897,16 +897,16 @@
    ]
   },
   "gha|upgrade uv.lock": {
-   "n": 7,
+   "n": 9,
    "kwh": [
-    0.0007907442222222223,
-    0.0012611053333333332,
-    0.0012611053333333332
+    0.0009980735,
+    0.0015917609999999997,
+    0.0015917609999999997
    ],
    "kg": [
-    0.00029257536222222227,
-    0.0004666089733333334,
-    0.0004666089733333334
+    0.000369287195,
+    0.00058895157,
+    0.00058895157
    ]
   },
   "gha|pages-build-deployment": {
@@ -1016,29 +1016,29 @@
    ]
   },
   "main / unattributed": {
-   "n": 581,
+   "n": 605,
    "kwh": [
-    99.93964374759571,
-    130.37565615894064,
-    269.39647173359026
+    102.36557509783472,
+    133.24804494767105,
+    274.0546902762862
    ],
    "kg": [
-    32.982523662920684,
-    43.03238507265431,
-    88.90681525061119
+    33.78303844830042,
+    43.98022298014958,
+    90.44394564656854
    ]
   },
   "#364 Fix contributors nesting; drop duplicate docs list from README and index": {
-   "n": 82,
+   "n": 96,
    "kwh": [
-    29.650539156480104,
-    35.834829264861085,
-    60.487003476162705
+    40.16227982075411,
+    48.49645682925548,
+    81.74817864103866
    ],
    "kg": [
-    9.785587103185666,
-    11.827144577602501,
-    19.961929573047616
+    13.254277105893207,
+    16.00525954003574,
+    26.97774437438363
    ]
   },
   "#201 virgil docs minor changes": {
@@ -1081,7 +1081,7 @@
    ]
   },
   "#399 Release 0.4.0: version, uv.lock and restructured changelog": {
-   "n": 203,
+   "n": 204,
    "kwh": [
     3.3719647751514503,
     4.521834346601205,
@@ -1169,6 +1169,19 @@
     0.846673537622275,
     1.0341835550431748,
     1.5760199997267779
+   ]
+  },
+  "#516 radio_toeplitz: dirty-beam (Toeplitz) \u03c7\u00b2 for one-Image radio fits (PR 1, core)": {
+   "n": 60,
+   "kwh": [
+    2.6028177155668906,
+    3.0752767753541357,
+    4.589500986725337
+   ],
+   "kg": [
+    0.865201526994275,
+    1.024862495667582,
+    1.5245299200830356
    ]
   },
   "#347 PolarDisk P5: tutorial, a planet in a gap between inclined rings": {
@@ -1574,6 +1587,19 @@
     0.5852198392643728
    ]
   },
+  "#522 Upgrade uv.lock": {
+   "n": 67,
+   "kwh": [
+    0.510707562125,
+    0.8143867079583335,
+    0.8143867079583335
+   ],
+   "kg": [
+    0.18896179798625,
+    0.3013230819445834,
+    0.3013230819445834
+   ]
+  },
   "#398 Simplify imaging, gains, fitting, ensemble and friends before 0.4.0": {
    "n": 27,
    "kwh": [
@@ -1769,19 +1795,6 @@
     0.5195781183157364
    ]
   },
-  "#467 Upgrade uv.lock": {
-   "n": 55,
-   "kwh": [
-    0.43865824450000007,
-    0.6995009320000001,
-    0.6995009320000001
-   ],
-   "kg": [
-    0.162303550465,
-    0.25881534484,
-    0.25881534484
-   ]
-  },
   "#252 Multi-scale gradient CLEAN": {
    "n": 17,
    "kwh": [
@@ -1847,6 +1860,19 @@
     0.383150182069024
    ]
   },
+  "#474 fit: opt-in diagonal Gauss\u2013Newton preconditioning (Stage 7, B pieces 1\u20132)": {
+   "n": 50,
+   "kwh": [
+    0.5946215901955558,
+    0.7331069786853336,
+    1.114047421533333
+   ],
+   "kg": [
+    0.1991243642412355,
+    0.2465528827625573,
+    0.3722565457367334
+   ]
+  },
   "#133 Docs: point to virgil-validation for independent checks": {
    "n": 11,
    "kwh": [
@@ -1873,6 +1899,19 @@
     0.35529543670136016
    ]
   },
+  "#476 0.4.1: docstring-length gate, provenance census, batch A terse docstrings": {
+   "n": 48,
+   "kwh": [
+    0.5833740446685557,
+    0.7145919503301337,
+    1.0083327118653336
+   ],
+   "kg": [
+    0.19639054429853658,
+    0.24200247344129483,
+    0.33893177140121744
+   ]
+  },
   "#71 Imaging Stage 2: optional NUFFT backend, FT benchmark and OzSTAR GPU job": {
    "n": 18,
    "kwh": [
@@ -1897,6 +1936,19 @@
     0.1754322259251767,
     0.23391330783581457,
     0.4569838350660662
+   ]
+  },
+  "#513 radio: Laplace-marginalized antenna gains (Stage 1)": {
+   "n": 73,
+   "kwh": [
+    0.5436674830557781,
+    0.689681908563467,
+    1.068604805038667
+   ],
+   "kg": [
+    0.18285085306136376,
+    0.23308529959192822,
+    0.358123207658631
    ]
   },
   "#355 PolarDisk P4+P5: RadialGP, PolarKernel, freeze_geometry, tutorial (stacked merge landed on polar-p3)": {
@@ -2068,6 +2120,19 @@
     0.2895724792760553
    ]
   },
+  "#511 Release 0.4.1": {
+   "n": 70,
+   "kwh": [
+    0.38923027966611096,
+    0.5755401409458888,
+    0.684879224953889
+   ],
+   "kg": [
+    0.13913865245877102,
+    0.2069794307348229,
+    0.24305941022791885
+   ]
+  },
   "#92 ELR stage 0: golden fixture and reference posteriors from Shashank Dholakia's code": {
    "n": 10,
    "kwh": [
@@ -2118,6 +2183,19 @@
     0.16078961453866286,
     0.19852787059336877,
     0.29589491508997046
+   ]
+  },
+  "#470 Docs: speed up four slow example pages (profile fix #3)": {
+   "n": 41,
+   "kwh": [
+    0.39348981906555547,
+    0.5559158776544444,
+    0.7337905564544445
+   ],
+   "kg": [
+    0.13778416571267557,
+    0.19610228045046438,
+    0.25479780384606443
    ]
   },
   "#444 Image: optional Gaussian smoothing, regularisers on the smoothed pixels": {
@@ -2183,6 +2261,19 @@
     0.15480234947515253,
     0.19141886579592235,
     0.28981648385677905
+   ]
+  },
+  "#519 fit: gauge-fix the log-brightness of a free-pixel Image": {
+   "n": 44,
+   "kwh": [
+    0.4367114796617778,
+    0.5641526349490666,
+    0.8874707005426667
+   ],
+   "kg": [
+    0.14724293438588582,
+    0.19116156312455554,
+    0.29785085252367854
    ]
   },
   "NUTS mass matrix": {
@@ -2300,6 +2391,19 @@
     0.1266317801283994,
     0.17205054927857527,
     0.2651097728237233
+   ]
+  },
+  "#481 Public OIData \u2192 OIFITS writer; processed.oifits for closure-only data": {
+   "n": 40,
+   "kwh": [
+    0.4008549411640002,
+    0.5065703527223998,
+    0.7738342489560002
+   ],
+   "kg": [
+    0.134892065790968,
+    0.1713329568951688,
+    0.25952535381197195
    ]
   },
   "#190 clean: finite with correlated closure phases (regression from #174)": {
@@ -2523,6 +2627,19 @@
     0.3553008170531563
    ]
   },
+  "#496 tests: pipeline and sampler test dedupe, fixtures and fragile asserts (CI review PR C)": {
+   "n": 37,
+   "kwh": [
+    0.30571625659499996,
+    0.4147192229400001,
+    0.6202770883200002
+   ],
+   "kg": [
+    0.10475696143051498,
+    0.14303157875477993,
+    0.21086206805184
+   ]
+  },
   "#86 Imaging Stage 4 MWE-B: noise and coverage stress test": {
    "n": 8,
    "kwh": [
@@ -2534,6 +2651,19 @@
     0.09261921528016777,
     0.14224979105761273,
     0.3306543089951774
+   ]
+  },
+  "#517 plotting: plot_field_draws for GP image priors and posteriors": {
+   "n": 46,
+   "kwh": [
+    0.3246269372476668,
+    0.4137205576336004,
+    0.6323939558439998
+   ],
+   "kg": [
+    0.10943716133876362,
+    0.14021410780560306,
+    0.21237249283962809
    ]
   },
   "#464 Pipelines: simplify binary.py and star.py": {
@@ -2549,6 +2679,19 @@
     0.20250035112479717
    ]
   },
+  "#492 Harden the provenance and docstring gates; add the entries they reveal": {
+   "n": 34,
+   "kwh": [
+    0.313049566795889,
+    0.4058936596085333,
+    0.5903990030813332
+   ],
+   "kg": [
+    0.10644381176164786,
+    0.13895026343363573,
+    0.19983378984380934
+   ]
+  },
   "#321 aliases: robust to singular Hessians, per-band checkpoints, flat table scales": {
    "n": 23,
    "kwh": [
@@ -2560,6 +2703,19 @@
     0.10885549326241153,
     0.13579652513422913,
     0.19813242262149955
+   ]
+  },
+  "#473 CalibrationNuisance: natural-unit coordinates and profiled error scales": {
+   "n": 36,
+   "kwh": [
+    0.31970965004022234,
+    0.3965289388861333,
+    0.5364148998253333
+   ],
+   "kg": [
+    0.10831389492878817,
+    0.13533755865746688,
+    0.1814974716277373
    ]
   },
   "#257 Orbits fitted to visibilities across epochs: design and stage 1 (Epochs, OrbitalBinary)": {
@@ -2638,6 +2794,19 @@
     0.09751606550569879,
     0.1267170237634493,
     0.23123537263779528
+   ]
+  },
+  "#480 0.4.1: terse docstrings for data and pipeline modules (batch F)": {
+   "n": 31,
+   "kwh": [
+    0.3031458702381112,
+    0.37691363658186666,
+    0.601350229734667
+   ],
+   "kg": [
+    0.10122080603301009,
+    0.126269529277649,
+    0.20032966753398254
    ]
   },
   "#420 Design: instrument noise models in pipelines (0.4.1)": {
@@ -2809,6 +2978,32 @@
     0.23959195209290934
    ]
   },
+  "#475 OrbitPipeline: null-robustness check; slow star test; lowest-deps nightly fix": {
+   "n": 26,
+   "kwh": [
+    0.25116325292644437,
+    0.3320351319338667,
+    0.48077775907466663
+   ],
+   "kg": [
+    0.08581846678047841,
+    0.114252983361873,
+    0.16333544079856266
+   ]
+  },
+  "#483 Docstrings batch B: terse models.py docstrings": {
+   "n": 55,
+   "kwh": [
+    0.25217815341622213,
+    0.328560328611733,
+    0.4235393349493335
+   ],
+   "kg": [
+    0.08675556007230022,
+    0.11406675825667409,
+    0.1454081640497253
+   ]
+  },
   "#274 metrics: rms_convolved without pixel scale; clarify Lawson normalisation": {
    "n": 19,
    "kwh": [
@@ -2846,6 +3041,19 @@
     0.08640154845346643,
     0.1115595863815225,
     0.1565282700381913
+   ]
+  },
+  "#504 Code shape PR 4: pipelines, and split test_pipeline_orbit": {
+   "n": 38,
+   "kwh": [
+    0.24665621027055543,
+    0.3239717092173331,
+    0.48470284389333346
+   ],
+   "kg": [
+    0.08389033323201052,
+    0.11088905153444131,
+    0.16392750613305332
    ]
   },
   "#227 Examples: Jeffreys priors throughout (batch D)": {
@@ -2900,6 +3108,19 @@
     0.2181072394936645
    ]
   },
+  "#472 virgil.radio_clean: Cotton-Schwab CLEAN of complex visibilities (provisional)": {
+   "n": 41,
+   "kwh": [
+    0.23977304366222219,
+    0.3117483607573333,
+    0.42709593469333335
+   ],
+   "kg": [
+    0.0820230442860022,
+    0.1074999299614213,
+    0.14556260571865332
+   ]
+  },
   "#394 Remove virgil.spectra.Tabulated (use Nodes)": {
    "n": 18,
    "kwh": [
@@ -2911,6 +3132,19 @@
     0.08576272784601122,
     0.10655742591743572,
     0.1707792887586893
+   ]
+  },
+  "#520 Keep the grouped-Hessian test inside the CI time budget": {
+   "n": 26,
+   "kwh": [
+    0.18607781452055555,
+    0.2894688786061111,
+    0.3133561627261111
+   ],
+   "kg": [
+    0.06795768708513555,
+    0.10597340318680111,
+    0.11385578787124112
    ]
   },
   "#272 ensemble: judge the running mean on the members' own grids": {
@@ -2926,6 +3160,32 @@
     0.1886457725473928
    ]
   },
+  "#493 Fix OIFITS writer and OrbitPipeline robustness-check defects": {
+   "n": 29,
+   "kwh": [
+    0.24023632927777774,
+    0.30613297037866666,
+    0.46494372922666677
+   ],
+   "kg": [
+    0.0810359775177778,
+    0.10382893059821062,
+    0.15623369486438674
+   ]
+  },
+  "#491 Restore caveats cut from 0.4.1 docstrings (docstrings and comments only)": {
+   "n": 50,
+   "kwh": [
+    0.23138472458555548,
+    0.302167201617333,
+    0.4337719986333333
+   ],
+   "kg": [
+    0.0789013705746655,
+    0.10377426189224123,
+    0.14720153605143324
+   ]
+  },
   "#135 Fix laplace_cov and siblings with array-valued parameter paths": {
    "n": 12,
    "kwh": [
@@ -2937,6 +3197,19 @@
     0.0695975621832818,
     0.10334459765541062,
     0.23080750799141098
+   ]
+  },
+  "#485 Faster to_kepler (jitted kernels); finish orbit docstrings": {
+   "n": 20,
+   "kwh": [
+    0.2439390721659999,
+    0.3029444088696,
+    0.44469850568400004
+   ],
+   "kg": [
+    0.08208107639524197,
+    0.10249488827893523,
+    0.14927125331370797
    ]
   },
   "#185 RVData: fitted RV jitter (Stage 6a.1)": {
@@ -3082,6 +3355,19 @@
     0.17525436659488533
    ]
   },
+  "#518 MultipoleField: single-valued at the centre when r_min_mas=0": {
+   "n": 58,
+   "kwh": [
+    0.18519547951522225,
+    0.2649422068261332,
+    0.3253681716253331
+   ],
+   "kg": [
+    0.06545994452736319,
+    0.09436170895824694,
+    0.11430121723733733
+   ]
+  },
   "#81 Imaging Stage 4d: a binary star alongside the PIONIER image": {
    "n": 5,
    "kwh": [
@@ -3134,6 +3420,19 @@
     0.20750132729405804
    ]
   },
+  "#478 Alias-aware default search box on lattice coverage": {
+   "n": 26,
+   "kwh": [
+    0.2123493156528889,
+    0.2687943028877333,
+    0.4294349740493334
+   ],
+   "kg": [
+    0.07116711335455687,
+    0.09044464735548609,
+    0.14345325058142533
+   ]
+  },
   "#288 Fit budgets and guards; phase-coherent period grid (orbit review PR B)": {
    "n": 43,
    "kwh": [
@@ -3158,6 +3457,19 @@
     0.06931550390600662,
     0.09028244182924465,
     0.14950720580213323
+   ]
+  },
+  "#489 Code shape audit for 0.4.1 (report only)": {
+   "n": 44,
+   "kwh": [
+    0.21800271433299998,
+    0.26464644547679983,
+    0.3665563700519998
+   ],
+   "kg": [
+    0.07336103499262095,
+    0.08959966929672158,
+    0.12322815651312397
    ]
   },
   "#340 P6: PolarField for Image; FlaredDisk vs PolarDisk comparison": {
@@ -3186,6 +3498,19 @@
     0.13366340440679733
    ]
   },
+  "#512 Fix alias-search OOM: Hessian in memory-budgeted groups of nights": {
+   "n": 28,
+   "kwh": [
+    0.18893518197866654,
+    0.25279212673119983,
+    0.34687457240800007
+   ],
+   "kg": [
+    0.06505893061641062,
+    0.0877447630757744,
+    0.11879031957989597
+   ]
+  },
   "#385 Docs for 0.4.0: quickstart, Which orbit tool?, extras notes, metadata": {
    "n": 40,
    "kwh": [
@@ -3210,6 +3535,32 @@
     0.06320907586615056,
     0.08664968659234004,
     0.17350732642500272
+   ]
+  },
+  "#505 fit: entropy-metric diagonal, MaxEntropy.residuals, lbfgs_memory 100": {
+   "n": 62,
+   "kwh": [
+    0.14668305322222222,
+    0.2339350393333332,
+    0.2339350393333332
+   ],
+   "kg": [
+    0.05427272969222222,
+    0.08655596455333334,
+    0.08655596455333334
+   ]
+  },
+  "#497 Code shape PR 6: Wave 3 inlines, per-channel alias limit, guard": {
+   "n": 31,
+   "kwh": [
+    0.18378178039477774,
+    0.24835538894986656,
+    0.36749176761466656
+   ],
+   "kg": [
+    0.06298523507230674,
+    0.08568558392306508,
+    0.12499849877054263
    ]
   },
   "#103 Use jaxbessel for Bessel functions and drop drpangloss's copy": {
@@ -3329,6 +3680,32 @@
     0.14175748519454437
    ]
   },
+  "#509 Retire the Gl 229 release gate (merge after v0.4.1)": {
+   "n": 44,
+   "kwh": [
+    0.16203779804444446,
+    0.22733641770266652,
+    0.28797350744666644
+   ],
+   "kg": [
+    0.0568427656006444,
+    0.08039661802459866,
+    0.10040579383152666
+   ]
+  },
+  "#479 0.4.1 docstrings batch E: detection, limits, grid_fit, plotting": {
+   "n": 19,
+   "kwh": [
+    0.19785448124244437,
+    0.23847819879146662,
+    0.34093893009866666
+   ],
+   "kg": [
+    0.0662982099742704,
+    0.08030392876516426,
+    0.11411417253985066
+   ]
+  },
   "#326 Docs: comparison with other packages": {
    "n": 19,
    "kwh": [
@@ -3381,6 +3758,19 @@
     0.10864811394808527
    ]
   },
+  "#484 0.4.1: terse docstrings, batch C+D (fitting, imaging)": {
+   "n": 14,
+   "kwh": [
+    0.184359245813,
+    0.22904037329279997,
+    0.3161821332119999
+   ],
+   "kg": [
+    0.062375628884881004,
+    0.07803584625251361,
+    0.10679109822304401
+   ]
+  },
   "#442 Test the gains quadrature at 16 and 32 nodes": {
    "n": 33,
    "kwh": [
@@ -3392,6 +3782,32 @@
     0.05058259143764743,
     0.07695472897111148,
     0.10170441771607867
+   ]
+  },
+  "#526 plot_field_draws: accept a MultipoleDisk with a RadialGP profile": {
+   "n": 35,
+   "kwh": [
+    0.17489574634055544,
+    0.22324191234933322,
+    0.33014896527333343
+   ],
+   "kg": [
+    0.05916697776510053,
+    0.07598551976852531,
+    0.1112629716711133
+   ]
+  },
+  "#499 Code shape 5: inline single-use helpers in the numerics modules": {
+   "n": 23,
+   "kwh": [
+    0.16346564992766668,
+    0.2180116133655999,
+    0.313878633784
+   ],
+   "kg": [
+    0.05599801925942366,
+    0.0752209350578872,
+    0.10685536991840798
    ]
   },
   "#366 Orbit 1b: night flags with reasons and UD-aware seeds (to main)": {
@@ -3485,6 +3901,19 @@
     0.2374279868026603
    ]
   },
+  "#501 0.4.1: docs, references and housekeeping": {
+   "n": 47,
+   "kwh": [
+    0.1568675373054444,
+    0.20908047202826638,
+    0.28655232203066644
+   ],
+   "kg": [
+    0.05397318758740138,
+    0.07251691514600589,
+    0.09808126649153463
+   ]
+  },
   "#367 PolarDisk tutorial: five-cell prose, folded code, reference folded into API": {
    "n": 33,
    "kwh": [
@@ -3535,6 +3964,19 @@
     0.04683539434707322,
     0.07045582611929893,
     0.08134199376375734
+   ]
+  },
+  "#482 0.4.1: terse docstrings, batch H (fields, svi, likelihood, ensemble, crossval, ...)": {
+   "n": 31,
+   "kwh": [
+    0.16914262696655552,
+    0.20797850717493313,
+    0.29945616689733345
+   ],
+   "kg": [
+    0.05688824675736252,
+    0.07034234461943255,
+    0.10052836745660132
    ]
   },
   "#419 Remove dead code and merge duplicates (0.4.0 batch B)": {
@@ -3836,6 +4278,19 @@
     0.059094319366666655
    ]
   },
+  "#502 Finite radial gradients at the origin (PR D of the CI review)": {
+   "n": 28,
+   "kwh": [
+    0.12933120516733335,
+    0.17269388805439992,
+    0.2713572029359999
+   ],
+   "kg": [
+    0.04393486349009132,
+    0.0589919902756528,
+    0.09154915325123202
+   ]
+  },
   "#438 radio: document and test that term data stay jit arguments": {
    "n": 26,
    "kwh": [
@@ -3860,19 +4315,6 @@
     0.033203291119760774,
     0.05848742128881031,
     0.08637037145524125
-   ]
-  },
-  "#470 Docs: speed up four slow example pages (profile fix #3)": {
-   "n": 29,
-   "kwh": [
-    0.1383043177977777,
-    0.17484884276266652,
-    0.29957388706666666
-   ],
-   "kg": [
-    0.04599881317551774,
-    0.05827248992981868,
-    0.09942956639146663
    ]
   },
   "#166 Sparse imaging S2: gradient CLEAN": {
@@ -3901,6 +4343,19 @@
     0.2069079919175544
    ]
   },
+  "#495 tests: orbit-stack CI trims (PR B, partial)": {
+   "n": 27,
+   "kwh": [
+    0.1051299704811111,
+    0.15780854347866669,
+    0.18978561324666668
+   ],
+   "kg": [
+    0.03769719182480111,
+    0.05686835288591067,
+    0.06742022490812669
+   ]
+  },
   "#382 Perf: evidence SVD on device (#328), chunked dirty_image, jitted metrics.align": {
    "n": 53,
    "kwh": [
@@ -3925,6 +4380,19 @@
     0.05631580377312499,
     0.05631580377312499,
     0.05631580377312499
+   ]
+  },
+  "#510 fit: L-BFGS memory defaults to 100, capped at a 1 GiB history (re-lands #508)": {
+   "n": 29,
+   "kwh": [
+    0.10728958386788887,
+    0.15444520919573332,
+    0.1850034327293333
+   ],
+   "kg": [
+    0.03806213219501189,
+    0.05520399730368213,
+    0.06528767496058537
    ]
   },
   "#119 Follow-up to #118: Copilot review fixes": {
@@ -3966,6 +4434,19 @@
     0.1279986245700546
    ]
   },
+  "#488 0.4.1 Wave 3: radio argument order, safe_azimuth, _PixelRendered, empty docstring allowlist": {
+   "n": 26,
+   "kwh": [
+    0.12328155719722222,
+    0.15823468368133323,
+    0.2306019951733332
+   ],
+   "kg": [
+    0.04181509841229719,
+    0.05402376469600935,
+    0.0779037078864133
+   ]
+  },
   "#263 Model before data in the likelihoods; one name per argument (argument order PR 3)": {
    "n": 5,
    "kwh": [
@@ -4003,6 +4484,19 @@
     0.03423148744348357,
     0.05260919768399516,
     0.11851311020998867
+   ]
+  },
+  "#471 Dev carbon: refresh to 2026-10-22 and add everyday equivalents": {
+   "n": 18,
+   "kwh": [
+    0.10383506917,
+    0.14874452208,
+    0.1978743337199999
+   ],
+   "kg": [
+    0.03645873937029,
+    0.052583723348959985,
+    0.06879569926363999
    ]
   },
   "#173 Stage 6a.1: TruncatedCone component": {
@@ -4044,6 +4538,32 @@
     0.19827073100981646
    ]
   },
+  "#498 Code shape PR 2: orbit family private surface": {
+   "n": 14,
+   "kwh": [
+    0.11162784747877777,
+    0.14757538689226665,
+    0.20641373899066665
+   ],
+   "kg": [
+    0.038264018882314774,
+    0.05097596688137386,
+    0.07039159082205466
+   ]
+  },
+  "#506 Code shape PR 3: shrink pipeline/disk.py private surface": {
+   "n": 18,
+   "kwh": [
+    0.1004935689291111,
+    0.1432050554154667,
+    0.17713002913866663
+   ],
+   "kg": [
+    0.03546396142367711,
+    0.05092781289265226,
+    0.062122459046330666
+   ]
+  },
   "#454 FlaredDisk: drop arctan2/cos from the render": {
    "n": 22,
    "kwh": [
@@ -4081,6 +4601,32 @@
     0.03165671749944444,
     0.05047948340222222,
     0.05047948340222222
+   ]
+  },
+  "#490 Design note: XLA CPU nondeterminism in the compiled LM solve": {
+   "n": 39,
+   "kwh": [
+    0.10325563741433334,
+    0.14461035109759998,
+    0.21128778916399985
+   ],
+   "kg": [
+    0.03573326118093032,
+    0.050367438418171206,
+    0.07236982320046799
+   ]
+  },
+  "#487 Test float32 vs float64 image visibilities on long baselines": {
+   "n": 25,
+   "kwh": [
+    0.09202766848111109,
+    0.13645582137066667,
+    0.16114046070666665
+   ],
+   "kg": [
+    0.032941263244301106,
+    0.04913272515411467,
+    0.057278223071146654
    ]
   },
   "#407 tests: keep PR CI under the per-test budget (DiskPipeline, ensemble)": {
@@ -4135,6 +4681,32 @@
     0.11708250447663307
    ]
   },
+  "#494 CI plumbing: restore the per-test budget, rebalance shards, fix the nightly": {
+   "n": 27,
+   "kwh": [
+    0.10518003087366667,
+    0.13527899564319998,
+    0.1877707713879999
+   ],
+   "kg": [
+    0.03584963025752566,
+    0.046461099237718406,
+    0.06378246432515602
+   ]
+  },
+  "#500 Code shape 1/6: oifits, _closure, oidata private surface": {
+   "n": 14,
+   "kwh": [
+    0.09816381544777779,
+    0.13300260083866666,
+    0.17718418684666665
+   ],
+   "kg": [
+    0.03399304211256777,
+    0.04644138306823067,
+    0.06102053133532665
+   ]
+  },
   "#230 CLEAN: final major cycle, base_priors; fit: L-BFGS memory 50": {
    "n": 11,
    "kwh": [
@@ -4159,6 +4731,19 @@
     0.03402542218479412,
     0.04508493338831502,
     0.058643338757954216
+   ]
+  },
+  "#503 Package surface for 0.4.1: lazy imports, radio_clean cleanup": {
+   "n": 35,
+   "kwh": [
+    0.08684419185322226,
+    0.12692033389093332,
+    0.17610495759733316
+   ],
+   "kg": [
+    0.03052596407366922,
+    0.04486207466852453,
+    0.061092137603501344
    ]
   },
   "#80 Add FlaredDisk components (Blakely et al. 2024 scattered-light disk)": {
@@ -4341,6 +4926,19 @@
     0.027247031033946663,
     0.04161000798527201,
     0.04792150245724
+   ]
+  },
+  "#507 0.4.1 polish: deferred review items (OIData docs, write_oifits error, OrbitPipeline output)": {
+   "n": 10,
+   "kwh": [
+    0.09839724028144445,
+    0.12181174154186665,
+    0.18197085769466664
+   ],
+   "kg": [
+    0.03303277420511344,
+    0.041094284654169054,
+    0.060945737561502664
    ]
   },
   "#271 CI: drop the legacy mkdocs workflow; lint script uses the venv python": {
@@ -4538,6 +5136,19 @@
     0.13365253766269242
    ]
   },
+  "#525 docs: plot_field_draws GP prior figure in imaging_composite": {
+   "n": 22,
+   "kwh": [
+    0.061928773111111106,
+    0.09876607866666666,
+    0.09876607866666666
+   ],
+   "kg": [
+    0.022913646051111108,
+    0.03654344910666666,
+    0.03654344910666666
+   ]
+  },
   "#415 pipelines: start NUTS and the ring fits where the gradient is finite (docs/pipeline.md)": {
    "n": 22,
    "kwh": [
@@ -4588,6 +5199,32 @@
     0.014252612222327734,
     0.03632190876608168,
     0.10484047622932671
+   ]
+  },
+  "#524 docs: regenerate the MultipoleField prior figure (regular origin)": {
+   "n": 18,
+   "kwh": [
+    0.064498657582,
+    0.0978815610072,
+    0.112675674708
+   ],
+   "kg": [
+    0.023280447949734,
+    0.0354841161935864,
+    0.040365914168996
+   ]
+  },
+  "#508 fit: L-BFGS memory defaults to 100, capped at a 2 GB history": {
+   "n": 30,
+   "kwh": [
+    0.06004834477777778,
+    0.09576710866666668,
+    0.09576710866666668
+   ],
+   "kg": [
+    0.02221788756777777,
+    0.03543383020666667,
+    0.03543383020666667
    ]
   },
   "#342 Design note: composite scenes (identifiability toy)": {
@@ -4666,6 +5303,19 @@
     0.015077778599911855,
     0.0331834618861461,
     0.0792227516958344
+   ]
+  },
+  "#515 Radio innovations register; AGENTS.md rule on methods beyond published practice": {
+   "n": 33,
+   "kwh": [
+    0.08301249580022224,
+    0.09991482180613336,
+    0.16099643138533318
+   ],
+   "kg": [
+    0.02750245525490821,
+    0.033145231879506944,
+    0.05330109143345734
    ]
   },
   "#312 One import convention: jax.numpy as np, numpy as onp (#306 s1)": {
@@ -5240,6 +5890,19 @@
     0.05900314697381735
    ]
   },
+  "#467 Upgrade uv.lock": {
+   "n": 5,
+   "kwh": [
+    0.03771946372222222,
+    0.06015626233333333,
+    0.06015626233333333
+   ],
+   "kg": [
+    0.013956201577222223,
+    0.02225781706333333,
+    0.02225781706333333
+   ]
+  },
   "#147 Stage 6a.1: PositionData and starting orbits (Thiele\u2013Innes grid solve)": {
    "n": 10,
    "kwh": [
@@ -5435,6 +6098,19 @@
     0.05801917167555253
    ]
   },
+  "#523 Drop mutation testing from the release checklist": {
+   "n": 8,
+   "kwh": [
+    0.03604794159922223,
+    0.053929441928533335,
+    0.06234674880133334
+   ],
+   "kg": [
+    0.012956600944371222,
+    0.019488546079475734,
+    0.022266109675449335
+   ]
+  },
   "#181 Stage 6a: line and node spectra, Sum, total_spectrum, OIData.select": {
    "n": 8,
    "kwh": [
@@ -5576,6 +6252,19 @@
     0.011015691784583333,
     0.017561356645694443,
     0.017561356645694443
+   ]
+  },
+  "#486 docs: preconditioning (precondition=\"diag\") user section and provenance": {
+   "n": 40,
+   "kwh": [
+    0.029681838,
+    0.04733758800000001,
+    0.04733758800000001
+   ],
+   "kg": [
+    0.010982280059999995,
+    0.01751490756,
+    0.01751490756
    ]
   },
   "#275 CI: two xdist workers on the lowest-deps job": {
@@ -5771,6 +6460,19 @@
     0.009284327197083332,
     0.014802920877638888,
     0.014802920877638888
+   ]
+  },
+  "#527 docs: GP prior figures on the GP and IFT page": {
+   "n": 17,
+   "kwh": [
+    0.024908443,
+    0.039724818000000016,
+    0.039724818000000016
+   ],
+   "kg": [
+    0.009216123909999999,
+    0.01469818266,
+    0.01469818266
    ]
   },
   "#267 Design note: plate-scale nuisances can absorb inter-instrument motion": {
@@ -6280,6 +6982,19 @@
     0.0003414212
    ]
   },
+  "#477 Upgrade uv.lock": {
+   "n": 7,
+   "kwh": [
+    0.0004966259444444444,
+    0.0007920356666666666,
+    0.0007920356666666666
+   ],
+   "kg": [
+    0.00018375159944444445,
+    0.0002930531966666666,
+    0.0002930531966666666
+   ]
+  },
   "#392 Upgrade uv.lock": {
    "n": 4,
    "kwh": [
@@ -6376,20 +7091,20 @@
  },
  "claude_token_types": {
   "input": {
-   "tokens": 270829,
-   "kg": 0.01627813130566
+   "tokens": 281901,
+   "kg": 0.01694137576838
   },
   "cache_write": {
-   "tokens": 175018854,
-   "kg": 12.115677067211479
+   "tokens": 190600043,
+   "kg": 13.050830451306759
   },
   "cache_read": {
-   "tokens": 8049354804,
-   "kg": 49.41867050788862
+   "tokens": 8834821982,
+   "kg": 53.28397117766779
   },
   "output": {
-   "tokens": 19494300,
-   "kg": 31.007719100898395
+   "tokens": 22601235,
+   "kg": 35.150594039698895
   }
  },
  "copilot_check": [
@@ -6740,6 +7455,54 @@
   "#108 Size the grid tools' default batch by data size": 108,
   "#111 Use a larger default grid batch on GPUs": 111,
   "#433 Fit summary: forward-only chi-squared, L-BFGS gradient norm from its state": 433,
+  "#471 Dev carbon: refresh to 2026-10-22 and add everyday equivalents": 471,
+  "#473 CalibrationNuisance: natural-unit coordinates and profiled error scales": 473,
+  "#474 fit: opt-in diagonal Gauss\u2013Newton preconditioning (Stage 7, B pieces 1\u20132)": 474,
+  "#476 0.4.1: docstring-length gate, provenance census, batch A terse docstrings": 476,
+  "#478 Alias-aware default search box on lattice coverage": 478,
+  "#475 OrbitPipeline: null-robustness check; slow star test; lowest-deps nightly fix": 475,
+  "#472 virgil.radio_clean: Cotton-Schwab CLEAN of complex visibilities (provisional)": 472,
+  "#479 0.4.1 docstrings batch E: detection, limits, grid_fit, plotting": 479,
+  "#481 Public OIData \u2192 OIFITS writer; processed.oifits for closure-only data": 481,
+  "#480 0.4.1: terse docstrings for data and pipeline modules (batch F)": 480,
+  "#485 Faster to_kepler (jitted kernels); finish orbit docstrings": 485,
+  "#482 0.4.1: terse docstrings, batch H (fields, svi, likelihood, ensemble, crossval, ...)": 482,
+  "#484 0.4.1: terse docstrings, batch C+D (fitting, imaging)": 484,
+  "#483 Docstrings batch B: terse models.py docstrings": 483,
+  "#488 0.4.1 Wave 3: radio argument order, safe_azimuth, _PixelRendered, empty docstring allowlist": 488,
+  "#487 Test float32 vs float64 image visibilities on long baselines": 487,
+  "#489 Code shape audit for 0.4.1 (report only)": 489,
+  "#493 Fix OIFITS writer and OrbitPipeline robustness-check defects": 493,
+  "#492 Harden the provenance and docstring gates; add the entries they reveal": 492,
+  "#491 Restore caveats cut from 0.4.1 docstrings (docstrings and comments only)": 491,
+  "#490 Design note: XLA CPU nondeterminism in the compiled LM solve": 490,
+  "#496 tests: pipeline and sampler test dedupe, fixtures and fragile asserts (CI review PR C)": 496,
+  "#494 CI plumbing: restore the per-test budget, rebalance shards, fix the nightly": 494,
+  "#495 tests: orbit-stack CI trims (PR B, partial)": 495,
+  "#497 Code shape PR 6: Wave 3 inlines, per-channel alias limit, guard": 497,
+  "#499 Code shape 5: inline single-use helpers in the numerics modules": 499,
+  "#498 Code shape PR 2: orbit family private surface": 498,
+  "#500 Code shape 1/6: oifits, _closure, oidata private surface": 500,
+  "#504 Code shape PR 4: pipelines, and split test_pipeline_orbit": 504,
+  "#502 Finite radial gradients at the origin (PR D of the CI review)": 502,
+  "#501 0.4.1: docs, references and housekeeping": 501,
+  "#503 Package surface for 0.4.1: lazy imports, radio_clean cleanup": 503,
+  "#506 Code shape PR 3: shrink pipeline/disk.py private surface": 506,
+  "#507 0.4.1 polish: deferred review items (OIData docs, write_oifits error, OrbitPipeline output)": 507,
+  "#509 Retire the Gl 229 release gate (merge after v0.4.1)": 509,
+  "#510 fit: L-BFGS memory defaults to 100, capped at a 1 GiB history (re-lands #508)": 510,
+  "#511 Release 0.4.1": 511,
+  "#512 Fix alias-search OOM: Hessian in memory-budgeted groups of nights": 512,
+  "#513 radio: Laplace-marginalized antenna gains (Stage 1)": 513,
+  "#516 radio_toeplitz: dirty-beam (Toeplitz) \u03c7\u00b2 for one-Image radio fits (PR 1, core)": 516,
+  "#515 Radio innovations register; AGENTS.md rule on methods beyond published practice": 515,
+  "#517 plotting: plot_field_draws for GP image priors and posteriors": 517,
+  "#518 MultipoleField: single-valued at the centre when r_min_mas=0": 518,
+  "#519 fit: gauge-fix the log-brightness of a free-pixel Image": 519,
+  "#520 Keep the grouped-Hessian test inside the CI time budget": 520,
+  "#523 Drop mutation testing from the release checklist": 523,
+  "#524 docs: regenerate the MultipoleField prior figure (regular origin)": 524,
+  "#526 plot_field_draws: accept a MultipoleDisk with a RadialGP profile": 526,
   "#46 Add regression guard for notebook-path normalization in tutorial doc generation": 46,
   "#47 Add BinaryModel coordinate conversion helpers": 47,
   "#48 Normalize Gaussian log-likelihoods in model fitting": 48,
@@ -6868,7 +7631,7 @@
   "#357 PolarField: share RadialGP/PolarKernel kernels and tie geometry to the disk": 357,
   "#358 Fix spurious failing review-response label check": 358,
   "#359 Orbit 1a: AliasResult load, scene() and residuals()": 359,
-  "#467 Upgrade uv.lock": 467,
+  "#522 Upgrade uv.lock": 522,
   "#366 Orbit 1b: night flags with reasons and UD-aware seeds (to main)": 366,
   "#363 CI: raise the per-test budget to 30 s": 363,
   "#360 Upgrade uv.lock": 360,
@@ -6894,6 +7657,13 @@
   "#452 Closure offsets for three-telescope data (triangle and modes groups)": 452,
   "#457 ImagingPipeline: pipeline skeleton (PR B)": 457,
   "#460 ImagingPipeline C: ensemble stage": 460,
+  "#467 Upgrade uv.lock": 467,
+  "#477 Upgrade uv.lock": 477,
+  "#486 docs: preconditioning (precondition=\"diag\") user section and provenance": 486,
+  "#505 fit: entropy-metric diagonal, MaxEntropy.residuals, lbfgs_memory 100": 505,
+  "#508 fit: L-BFGS memory defaults to 100, capped at a 2 GB history": 508,
+  "#525 docs: plot_field_draws GP prior figure in imaging_composite": 525,
+  "#527 docs: GP prior figures on the GP and IFT page": 527,
   "Sparse imaging / CLEAN": 240,
   "Stage 6d gains": 180,
   "Imaging optimiser diagnostics": 204,
@@ -6910,7 +7680,7 @@
   "#45 swapping ruff hard-pin for soft-requirement": 45
  },
  "badge": {
-  "text": "dev carbon | 317 kg CO2e",
-  "url": "https://img.shields.io/badge/dev%20carbon-317%20kg%20CO%E2%82%82e-2e7d32"
+  "text": "dev carbon | 328 kg CO2e",
+  "url": "https://img.shields.io/badge/dev%20carbon-328%20kg%20CO%E2%82%82e-2e7d32"
  }
 }
