@@ -80,6 +80,14 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 
+### `virgil._nufft_spread`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `evaluate` | [Barnett et al. (2019)](#barnett2019), [arXiv:1808.06736](https://arxiv.org/abs/1808.06736), [ADS](https://ui.adsabs.harvard.edu/abs/2019SJSC...41C.479B/abstract), [doi:10.1137/18M120885X](https://doi.org/10.1137/18M120885X) | after |
+| `evaluate` | [Lee & Greengard (2005)](#leegreengard2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005JCoPh.206....1L/abstract), [doi:10.1016/j.jcp.2004.12.004](https://doi.org/10.1016/j.jcp.2004.12.004) | after |
+| `spread` | [Oudoumanessah & Iollo](#nufftax), [GitHub](https://github.com/GragasLab/nufftax) | after |
+
 ### `virgil.aliases`
 
 | Symbol | Source | Relation |
@@ -330,6 +338,15 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `clean` | [Offringa et al. (2014)](#offringa2014), [arXiv:1407.1943](https://arxiv.org/abs/1407.1943), [ADS](https://ui.adsabs.harvard.edu/abs/2014MNRAS.444..606O/abstract) | after |
 | `clean` | [Schwab (1984)](#schwab1984), [ADS](https://ui.adsabs.harvard.edu/abs/1984AJ.....89.1076S/abstract) | after |
 
+### `virgil.radio_toeplitz`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `ToeplitzVisData` | [Barnett et al. (2019)](#barnett2019), [arXiv:1808.06736](https://arxiv.org/abs/1808.06736), [ADS](https://ui.adsabs.harvard.edu/abs/2019SJSC...41C.479B/abstract), [doi:10.1137/18M120885X](https://doi.org/10.1137/18M120885X) | after |
+| `ToeplitzVisData` | [Fessler et al. (2005)](#fessler2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005ITSP...53.3393F/abstract), [doi:10.1109/TSP.2005.853152](https://doi.org/10.1109/TSP.2005.853152) | after |
+| `ToeplitzVisData` | [Lee & Greengard (2005)](#leegreengard2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005JCoPh.206....1L/abstract), [doi:10.1016/j.jcp.2004.12.004](https://doi.org/10.1016/j.jcp.2004.12.004) | after |
+| `ToeplitzVisData` | [Oudoumanessah & Iollo](#nufftax), [GitHub](https://github.com/GragasLab/nufftax) | after |
+
 ### `virgil.scenes`
 
 | Symbol | Source | Relation |
@@ -418,6 +435,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="arras2021"></a>**Arras et al. (2020)**. Comparison of classical and Bayesian imaging in radio interferometry. [arXiv:2008.11435](https://arxiv.org/abs/2008.11435), [ADS](https://ui.adsabs.harvard.edu/abs/2021A&A...646A..84A/abstract). A&A 646, A84 (2021); cited in the audit as the correlated-field source: check.
 - <a id="arras2022"></a>**Arras et al. (2020)**. Variable structures in M87* from space, time and frequency resolved interferometry. [arXiv:2002.05218](https://arxiv.org/abs/2002.05218), [ADS](https://ui.adsabs.harvard.edu/abs/2022NatAs...6..259A/abstract). Nature Astron. 6, 259 (2022).
 - <a id="barndorff-nielsen1973"></a>**Barndorff-Nielsen & Schou (1973)**. On the parametrization of autoregressive models by partial autocorrelations. [doi:10.1016/0047-259X(73)90030-4](https://doi.org/10.1016/0047-259X(73)90030-4). J. Multivariate Anal. 3, 408-419; the unconstrained reflection-coefficient parametrization of a minimum-phase polynomial. Standard mathematics, credited here and in docstrings, not on the contributors page.
+- <a id="barnett2019"></a>**Barnett et al. (2019)**. A parallel nonuniform fast Fourier transform library based on an "exponential of semicircle" kernel. [arXiv:1808.06736](https://arxiv.org/abs/1808.06736), [ADS](https://ui.adsabs.harvard.edu/abs/2019SJSC...41C.479B/abstract), [doi:10.1137/18M120885X](https://doi.org/10.1137/18M120885X). SIAM J. Sci. Comput. 41, C479 (FINUFFT); the ES kernel, and ψ̂ at non-integer frequencies by quadrature (Sect. 3.3).
 - <a id="baron2008"></a>**Baron & Young (2008)**. Image reconstruction at Cambridge University. [ADS](https://ui.adsabs.harvard.edu/abs/2008SPIE.7013E..3XB/abstract), [doi:10.1117/12.789115](https://doi.org/10.1117/12.789115). BSMEM; SPIE 7013.
 - <a id="baron2012"></a>**Baron et al. (2012)**. The 2012 Interferometric Imaging Beauty Contest. [arXiv:1207.7141](https://arxiv.org/abs/1207.7141), [ADS](https://ui.adsabs.harvard.edu/abs/2012SPIE.8445E..1EB/abstract). SPIE 8445.
 - <a id="baron2010squeeze"></a>**Baron, Monnier & Kloppenburg (2010)**. A novel image reconstruction software for optical/infrared interferometry. [ADS](https://ui.adsabs.harvard.edu/abs/2010SPIE.7734E..2IB/abstract), [doi:10.1117/12.857364](https://doi.org/10.1117/12.857364). SQUEEZE; SPIE 7734.
@@ -460,6 +478,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="ensslin2009"></a>**Enßlin, Frommert & Kitaura (2008)**. Information field theory for cosmological perturbation reconstruction and non-linear signal analysis. [arXiv:0806.3474](https://arxiv.org/abs/0806.3474), [ADS](https://ui.adsabs.harvard.edu/abs/2009PhRvD..80j5005E/abstract). Phys. Rev. D 80, 105005 (2009).
 - <a id="espinosalara2011"></a>**Espinosa Lara & Rieutord (2011)**. Gravity darkening in rotating stars. [arXiv:1109.3038](https://arxiv.org/abs/1109.3038), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...533A..43E/abstract), [doi:10.1051/0004-6361/201117252](https://doi.org/10.1051/0004-6361/201117252). A&A 533, A43.
 - <a id="fawcett2006"></a>**Fawcett (2006)**. An introduction to ROC analysis. [ADS](https://ui.adsabs.harvard.edu/abs/2006PaReL..27..861F/abstract), [doi:10.1016/j.patrec.2005.10.010](https://doi.org/10.1016/j.patrec.2005.10.010).
+- <a id="fessler2005"></a>**Fessler et al. (2005)**. Toeplitz-based iterative image reconstruction for MRI with correction for magnetic field inhomogeneity. [ADS](https://ui.adsabs.harvard.edu/abs/2005ITSP...53.3393F/abstract), [doi:10.1109/TSP.2005.853152](https://doi.org/10.1109/TSP.2005.853152). IEEE Trans. Signal Process. 53, 3393; the Toeplitz embedding of the normal operator AᴴWA on a 2N grid.
 - <a id="foreman-mackey2021"></a>**Foreman-Mackey et al. (2021)**. exoplanet: Gradient-based probabilistic inference for exoplanet data & other astronomical time series. [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285). JOSS 6, 3285.
 - <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI.
 - <a id="gallenne2015"></a>**Gallenne et al. (2015)**. Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars. [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract). CANDID.
@@ -498,6 +517,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="lannelongue2021"></a>**Lannelongue, Grealey & Inouye (2021)**. Green Algorithms: Quantifying the Carbon Footprint of Computation. [ADS](https://ui.adsabs.harvard.edu/abs/2021AdvSc...800707L/abstract), [doi:10.1002/advs.202100707](https://doi.org/10.1002/advs.202100707). Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md).
 - <a id="lawson2004"></a>**Lawson, Cotton & Hummel (2004)**. An interferometry imaging beauty contest. [ADS](https://ui.adsabs.harvard.edu/abs/2004SPIE.5491..886L/abstract), [doi:10.1117/12.550710](https://doi.org/10.1117/12.550710). Proc. SPIE 5491, 886; Eq. 2.
 - <a id="lazareff2017"></a>**Lazareff et al. (2016)**. Structure of Herbig AeBe disks at the milliarcsecond scale: A statistical survey in the H band using PIONIER-VLTI. [arXiv:1611.08428](https://arxiv.org/abs/1611.08428), [ADS](https://ui.adsabs.harvard.edu/abs/2017A&A...599A..85L/abstract). A&A 599, A85 (2017).
+- <a id="leegreengard2005"></a>**Lee & Greengard (2005)**. The type 3 nonuniform FFT and its applications. [ADS](https://ui.adsabs.harvard.edu/abs/2005JCoPh.206....1L/abstract), [doi:10.1016/j.jcp.2004.12.004](https://doi.org/10.1016/j.jcp.2004.12.004). J. Comput. Phys. 206, 1; a type-1 spread grid evaluated off the integer lattice (the free offsets).
 - <a id="lindgren2011"></a>**Lindgren, Rue & Lindström (2011)**. An Explicit Link between Gaussian Fields and Gaussian Markov Random Fields: The Stochastic Partial Differential Equation Approach. [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x). JRSS B 73, 423; Matérn fields as solutions of an SPDE.
 - <a id="liu1989"></a>**Liu & Nocedal (1989)**. On the limited memory BFGS method for large scale optimization. [ADS](https://ui.adsabs.harvard.edu/abs/1989MatPr..45..503L/abstract), [doi:10.1007/BF01589116](https://doi.org/10.1007/BF01589116). L-BFGS.
 - <a id="lucy2014"></a>**Lucy (2014)**. Mass estimates for visual binaries with incomplete orbits. [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract). A&A 563, A126.
@@ -512,6 +532,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="offringa2014"></a>**Offringa et al. (2014)**. WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy. [arXiv:1407.1943](https://arxiv.org/abs/1407.1943), [ADS](https://ui.adsabs.harvard.edu/abs/2014MNRAS.444..606O/abstract). MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows.
+- <a id="nufftax"></a>**Oudoumanessah & Iollo**. nufftax. [GitHub](https://github.com/GragasLab/nufftax). no paper; its spreader and kernel parameters (private API, nufftax >= 0.6.1). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="papaspiliopoulos2007"></a>**Papaspiliopoulos, Roberts & Sköld (2007)**. A General Framework for the Parametrization of Hierarchical Models. [ADS](https://ui.adsabs.harvard.edu/abs/2007StaSc..22...59P/abstract), [doi:10.1214/088342307000000014](https://doi.org/10.1214/088342307000000014). Statistical Science 22, 59; centred and non-centred parameterizations.
 - <a id="pauls2005"></a>**Pauls et al. (2005)**. A Data Exchange Standard for Optical (Visible/IR) Interferometry. [arXiv:astro-ph/0508185](https://arxiv.org/abs/astro-ph/0508185), [ADS](https://ui.adsabs.harvard.edu/abs/2005PASP..117.1255P/abstract), [doi:10.1086/444523](https://doi.org/10.1086/444523). OIFITS 1; PASP 117, 1255.
 - <a id="jaxbessel"></a>**Pope et al.**. jaxbessel. [GitHub](https://github.com/benjaminpope/jaxbessel). CEPHES (Moshier, https://www.netlib.org/cephes/) translation, adapted from harmonix; the Cephes credit lives here and in the jaxbessel repository. *Not yet verified against arXiv, Crossref or ADS.*

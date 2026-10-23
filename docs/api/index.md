@@ -28,6 +28,7 @@ may change in any 0.4.x release without a deprecation. See
 - [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits (provisional)
 - [Radio](radio.md): `ComplexVisData`, `CalibrationNuisance`, complex visibilities from CASA measurement sets with per-observation calibration nuisances (provisional)
 - [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances (provisional)
+- [Radio Toeplitz](radio_toeplitz.md): `ToeplitzVisData`, the radio χ² of a one-Image fit through precomputed dirty beams (provisional)
 - [Radio CLEAN](radio_clean.md): `clean`, CLEAN deconvolution of complex visibilities (provisional)
 - [Cross-validation](crossval.md): K-fold cross-validation of a hyperparameter (provisional)
 - [Short arcs](arcs.md): each night's velocity, the periods its positions and velocities admit, and each alias band's seed orbits (provisional)

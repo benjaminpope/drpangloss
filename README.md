@@ -19,7 +19,7 @@ virgil models optical interferometry data in JAX. It fits parametric models and 
 
 ## Stability
 
-Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, sparse-imaging CLEAN, radio visibilities and radio CLEAN (`radio`, `radio_clean`), cross-validation (`crossval`) and the image-recovery metrics. See the [list of provisional features](https://benjaminpope.github.io/virgil/stability/).
+Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, sparse-imaging CLEAN, radio visibilities, radio CLEAN and the Toeplitz χ² (`radio`, `radio_clean`, `radio_toeplitz`), cross-validation (`crossval`) and the image-recovery metrics. See the [list of provisional features](https://benjaminpope.github.io/virgil/stability/).
 
 ## Installation
 

@@ -42,6 +42,7 @@ EXPECTED = {
     "virgil.metrics": {"*"},
     "virgil.radio": {"*"},
     "virgil.radio_clean": {"*"},
+    "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
@@ -73,6 +74,7 @@ EXPECTED = {
     },
     "virgil.imaging": {"clean", "CleanResult"},
     "virgil.fitting": {"gauss_newton_diag"},
+    "virgil.plotting": {"plot_field_draws"},
 }
 
 
@@ -144,6 +146,7 @@ PAGES = [
     "docs/api/models/classes/multipole_disk.md",
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
+    "docs/api/radio_toeplitz.md",
     "docs/stability.md",
 ]
 

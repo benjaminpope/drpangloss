@@ -7,6 +7,41 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`virgil.radio_toeplitz`** (provisional): `ComplexVisData.toeplitz`
+  precomputes the dirty beams and images of a one-`Image` radio fit, after
+  Fessler et al. (2005). Its `term` gives the loss, gradient, profiled `ŝ` and
+  `derived` of `ComplexVisData.term` at a cost independent of the number of
+  visibilities. See [Toeplitz χ²](docs/radio_interferometry.md#toeplitz-chi2).
+  - Supported: per-observation gains, flux, taper, smoothing, a mask, and
+    fixed, fitted or profiled error scales; float64 only. The template's
+    fixed `dra`, `ddec` (such as a half-pixel map convention) are folded into
+    the visibilities at the precompute.
+  - Refused: antenna gains, a fitted spectral index and other components.
+  - `crosscheck` compares it with the direct term (about 1e-13 of the loss).
+    `rebuild` repeats the precompute for new weights without recompiling.
+  - Extension, opt-in: `offsets="spread"` fits the per-observation offsets
+    by evaluating the stored nufftax spread grids (nufftax ≥ 0.6.1) at
+    shifted positions. This is a type-3 evaluation (Lee & Greengard 2005;
+    Barnett et al. 2019); we know of no prior use of this combination. It
+    refuses baselines past the kernel's Nyquist margin. Tests:
+    `test_matches_direct_term`, `test_matches_direct_term_at_scale`,
+    `test_refuses_what_it_cannot_do`, `test_runtime_checks` and
+    `test_spread_grid_against_nufftax_and_direct_sums`.
+- `CalibrationNuisance(alpha=<float>)` fixes the spectral index at that value.
+- `ComplexVisData.chi2_by_ddid` takes `chunk_size` (that of `term`).
+- `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
+  residual vector). L-BFGS and Adam use them; LM and the Gauss–Newton
+  covariance raise `NoLeastSquaresForm`; `precondition="diag"` takes their
+  Gauss–Newton diagonal through `curvature_params` and `curvature_loss`.
+
+### Changes to default behaviour
+
+- `CalibrationNuisance(alpha=1)` (a non-zero integer) raises. It used to fit α
+  (`bool(1)`), and a float now fixes it. Pass `alpha=True` to fit or
+  `alpha=1.0` to fix; `alpha=0` still gives α = 0.
+
 ### Changed
 
 - `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged.
@@ -99,6 +134,8 @@ Measured on `src/virgil`, from v0.4.0 to 0.4.1:
 
 ### Added
 
+
+- `plot_field_draws`: three draws and an ensemble of cuts (principal axes, disk axes, or the azimuthal harmonics of a `MultipoleField`) for a Gaussian-process image prior or posterior, with an optional per-pixel S/N map. Figures in the imaging parts 3 and 5 and the multipole-disk pages.
 - Docs: the API index lists Radio CLEAN, Cross-validation and Short arcs; the fitting page documents `GaussNewtonMass` and its exceptions; the README names the `[radio]` and `[pipeline]` extras; the OIFITS writing sections are merged. Nine references checked against ADS (Högbom, Clark, Schwab, Briggs, Offringa, Quirrenbach, Thiele, Bekas, Hutchinson).
 - `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
 - `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI) and for data with flagged visibilities (flagged closure phases are still skipped); `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0; an unknown width is estimated from the channel spacing and marked `BANDEST`, since OIFITS2 needs it positive), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
@@ -1276,6 +1313,7 @@ Provisional in 0.4:
   `smoothed` option of the regularizers;
 - `virgil.crossval`;
 - `virgil.fitting.gauss_newton_diag` and the `precondition` argument of `fit`;
+- `virgil.plotting.plot_field_draws`;
 - the module `virgil.radio_clean` (new in 0.4.1: `clean`, `RadioCleanResult`,
   `fit_beam`, `restore`), with the `uvtaper` argument of
   `ComplexVisData.dirty_image` and `dirty_beam`, `ComplexVisData.sigma_hat`,
