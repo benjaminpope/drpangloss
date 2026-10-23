@@ -196,8 +196,18 @@ def _check_against_direct(data, npix, sigmas, offsets, rotation, seed, **kw):
     "virgil.radio_toeplitz.ToeplitzVisData",
     roots=["self-consistency"],
 )
-@pytest.mark.parametrize("offsets", [True, False])
-@pytest.mark.parametrize("sigmas", [False, True, "profile"])
+@pytest.mark.parametrize(
+    ("sigmas", "offsets"),
+    # fast: each σ mode once, with and without offsets; the rest slow
+    [
+        ("profile", True),
+        (False, False),
+        (True, False),
+        pytest.param(False, True, marks=pytest.mark.slow),
+        pytest.param(True, True, marks=pytest.mark.slow),
+        pytest.param("profile", False, marks=pytest.mark.slow),
+    ],
+)
 def test_matches_direct_term(sigmas, offsets):
     npix = 15 if offsets else 16  # odd and even grids
     data = _data(1500, npix, seed=1)
@@ -226,6 +236,7 @@ def test_matches_direct_term_at_scale():
         )
 
 
+@pytest.mark.slow
 def test_integer_lags_are_exact_past_nyquist():
     """Without free offsets the beam and dirty image sit at integer lags,
     exact for any baseline length (here 1.4 of the pixel Nyquist limit)."""
@@ -246,12 +257,23 @@ def test_integer_lags_are_exact_past_nyquist():
         assert _relative(grad[k], grad_d[k]) < 1e-10
 
 
-@pytest.mark.parametrize("kind", ["smoothed", "system"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("smoothed", marks=pytest.mark.slow),
+        pytest.param("system", marks=pytest.mark.slow),
+        "half_pixel",
+    ],
+)
 def test_scene_variants(kind):
     data = _data(1000, 12, seed=7)
     nuis = CalibrationNuisance(data, sigmas="profile", alpha=0.7)
     if kind == "smoothed":
         scene, template = _scene(12, 10.0, smooth_fwhm_mas=2.5)
+    elif (
+        kind == "half_pixel"
+    ):  # a fixed image offset, as MPoL's map convention
+        scene, template = _scene(12, 10.0, dra=-PIXEL / 2, ddec=-PIXEL / 2)
     else:
         image_scene, template = _scene(12, 10.0)
 
@@ -296,7 +318,8 @@ def test_results_match_direct():
         onp.testing.assert_array_equal(n, n_d)
         assert chi2[2] == 0.0 and n[2] == 0
         onp.testing.assert_allclose(chi2, chi2_d, rtol=1e-12)
-        assert tdata.crosscheck(scene, values, nuis)["max_rel"] < 1e-12
+        check = tdata.crosscheck(scene, values, nuis, chunk_size=256)
+        assert check["max_rel"] < 1e-12  # the direct term in chunks
     # a held-out score at fixed σ
     nuis = CalibrationNuisance(data, sigmas="profile", alpha=0.7)
     tdata = data.toeplitz(template, nuis, mask=mask, offsets="spread")
@@ -364,6 +387,7 @@ def _fit_both(tdata, nuis, scene, priors, init, **kw):
     return out
 
 
+@pytest.mark.slow
 def test_fit_reaches_the_direct_optimum():
     problem = _fit_problem()
     # Adam follows the same trajectory step for step.
@@ -387,6 +411,7 @@ def test_fit_reaches_the_direct_optimum():
     )
 
 
+@pytest.mark.slow
 def test_diag_preconditioner_uses_gauss_newton_curvature():
     tdata, nuis, scene, priors, init = _fit_problem(sigmas=False)
     values = dict(
@@ -493,7 +518,7 @@ def test_runtime_checks(small):
     values = _values(nuis)
     values["eta"] = np.zeros((8, 8))
     moved = tdata.term(lambda v: Image(v["eta"], PIXEL, dra=1.0), nuis)
-    with pytest.raises(Exception, match="zero offset"):
+    with pytest.raises(Exception, match="template's offset"):
         loss(moved, values)
 
 
@@ -525,6 +550,17 @@ def test_fit_protocol_refusals(small):
             dtype="float32",
             max_steps=2,
         )
+    # a few L-BFGS steps: the reported χ² and point count are the direct term's
+    result = fit(model, priors, (), likelihoods=[term], init=init, max_steps=3)
+    direct = data.toeplitz(template, nuis, offsets="spread").direct_term(
+        scene, nuis
+    )
+    residuals, _ = direct.residuals_and_log_norm(result.values)
+    assert result.info["method"] == "lbfgs"
+    assert result.info["chi2"][0] == pytest.approx(
+        float(np.sum(residuals**2)), rel=1e-10
+    )
+    assert result.info["ndata"] == [2 * len(data)]
 
 
 def test_needs_float64(small):

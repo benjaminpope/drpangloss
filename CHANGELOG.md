@@ -14,7 +14,9 @@ anything before 1.0 may change between minor versions.
   the loss, gradient, profiled `ŝ` and `derived` of `ComplexVisData.term` at a
   cost independent of the number of visibilities (per-observation gains,
   flux, taper, smoothing, mask; fixed, fitted or profiled error scales;
-  float64 only), after Fessler et al. (2005). Antenna gains, a fitted spectral
+  float64 only), after Fessler et al. (2005). The template's fixed `dra`,
+  `ddec` (such as a half-pixel map convention) are folded into the
+  visibilities at the precompute. Antenna gains, a fitted spectral
   index and other components are refused. `crosscheck` compares it with the
   direct term (about 1e-13 of the loss) and `rebuild` repeats the precompute
   for new weights without recompiling. See
@@ -30,6 +32,7 @@ anything before 1.0 may change between minor versions.
     the adapter against nufftax's type-1 transform and direct sums
     (`test_spread_grid_against_nufftax_and_direct_sums`).
 - `CalibrationNuisance(alpha=<number>)` fixes the spectral index at that value.
+- `ComplexVisData.chi2_by_ddid` takes `chunk_size` (that of `term`).
 - `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
   residual vector): L-BFGS and Adam use them, LM and the Gauss–Newton
   covariance raise `NoLeastSquaresForm`, and `precondition="diag"` takes

@@ -477,7 +477,8 @@ class ComplexVisData(eqx.Module):
         ----------
         image : Image
             The layout (shape, ``pixel_scale_mas``, ``rotation_deg``,
-            ``smooth_fwhm_mas``); its pixels are not used.
+            ``smooth_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
+            the visibilities); its pixels are not used.
         nuisance : CalibrationNuisance
             Its taper, ``nu0_hz`` and fixed ``alpha`` are folded in;
             antenna gains and a fitted ``alpha`` are refused.
@@ -520,16 +521,19 @@ class ComplexVisData(eqx.Module):
         term = self.term(scene, nuisance, mask=mask)
         return onp.asarray(term.sigma_hat(values))
 
-    def chi2_by_ddid(self, scene, values, nuisance, mask=None):
+    def chi2_by_ddid(
+        self, scene, values, nuisance, mask=None, chunk_size=10_000_000
+    ):
         """χ² of the data with the σ scales applied, per ddid.
 
         Returns ``(chi2, n)``: float64 arrays of length ``n_ddid``, ``n`` the
         number of unmasked points of each ddid (χ² sums two terms per point).
+        ``chunk_size`` is that of [`term`][virgil.radio.ComplexVisData.term].
         """
         if isinstance(scene, SourceModel):
             model = scene
             scene = lambda values: model  # noqa: E731
-        term = self.term(scene, nuisance, mask=mask)
+        term = self.term(scene, nuisance, mask=mask, chunk_size=chunk_size)
         r2 = term._r2(values)
         mask_ = (
             onp.ones(len(self), dtype=bool)

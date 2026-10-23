@@ -277,7 +277,8 @@ offsets and error scales take the diagonal of the loss Hessian.
 - **What it covers.** Per-observation gains, the flux, the nuisance taper, `Image(smooth_fwhm_mas=...)`, a mask, and fixed, fitted or
   profiled error scales. The image layout (shape, pixel scale, rotation,
   smoothing) is fixed at the precompute; the scene must return that layout,
-  alone or as the only part of a `System`, at zero `dra`, `ddec`.
+  alone or as the only part of a `System`, at the template's `dra`, `ddec`
+  (a fixed shift, folded into the visibilities at the precompute).
 - **What it refuses.** A fitted spectral index (pass `alpha=False` or a
   number), antenna gains, other components, float32, and fitted offsets
   unless asked for (below).

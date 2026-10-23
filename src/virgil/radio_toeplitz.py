@@ -41,7 +41,7 @@ import jax.numpy as np
 import numpy as onp
 
 from . import _nufft_spread as grid
-from ._geometry import gaussian_taper, rotate
+from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
 from .models import Image, SourceModel, System
 from .radio import _warn_double_taper
@@ -150,7 +150,7 @@ def _build(plan, vis, weight, *, npix, n_groups, nf_b, nf_d, free, kp):
     idx, valid = plan["idx"], plan["valid"]
     tx, ty, h = plan["tx"], plan["ty"], plan["h"]
     w = np.where(valid, weight[idx], 0.0)
-    v = np.where(valid, vis[idx], 0.0)
+    v = np.where(valid, vis[idx] * plan["rot"], 0.0)
     c_sum = jax.ops.segment_sum(
         np.sum(w * (v.real**2 + v.imag**2), axis=1),
         plan["group"],
@@ -219,6 +219,8 @@ class ToeplitzVisData(eqx.Module):
         Points used.
     npix, pixel_scale_mas, rotation_deg, smooth_fwhm_mas
         The Image layout the precompute is for.
+    image_offset_mas : (float, float)
+        The template's fixed ``(dra, ddec)``, folded into the visibilities.
     free_offsets : bool
         Whether ``D_d`` can be shifted (``offsets="spread"``).
     max_shift_pix : float
@@ -241,6 +243,7 @@ class ToeplitzVisData(eqx.Module):
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     smooth_fwhm_mas: float | None = eqx.field(static=True)
+    image_offset_mas: tuple = eqx.field(static=True)
     free_offsets: bool = eqx.field(static=True)
     max_shift_pix: float = eqx.field(static=True)
     nyquist_fraction: float = eqx.field(static=True)
@@ -279,6 +282,9 @@ class ToeplitzVisData(eqx.Module):
         nrow, ncol = image.eta.shape
         if nrow != ncol:
             raise ValueError(f"the Image must be square, not {nrow} x {ncol}.")
+        if onp.ndim(image.dra) or onp.ndim(image.ddec):
+            raise ValueError("the Image's dra and ddec must be numbers.")
+        dra, ddec = float(image.dra), float(image.ddec)
         n = len(data)
         mask = onp.ones(n, bool) if mask is None else onp.asarray(mask, bool)
         if mask.shape != (n,):
@@ -307,6 +313,8 @@ class ToeplitzVisData(eqx.Module):
                 gaussian_taper(u * u + v * v, image.smooth_fwhm_mas)
             )
         tau = float(onp.max(onp.maximum(onp.abs(tx), onp.abs(ty))) / onp.pi)
+        # A fixed image offset is a phase on the model; move it to the data.
+        rot = onp.conj(onp.asarray(offset_phase(u, v, dra, ddec)))
 
         n_groups = len(data.ddid_ids)
         group = onp.asarray(data.ddid, onp.int64)[used]
@@ -323,7 +331,7 @@ class ToeplitzVisData(eqx.Module):
             )
 
         def chunked(x):
-            return np.asarray(onp.where(valid, x[idx], 0.0))
+            return np.asarray(onp.where(valid, x[idx], 0))
 
         self.plan = dict(
             idx=np.asarray(used[idx]),
@@ -333,6 +341,7 @@ class ToeplitzVisData(eqx.Module):
             tx=chunked(tx),
             ty=chunked(ty),
             h=chunked(h),
+            rot=chunked(rot),
         )
         self.data = data
         self.mask = mask
@@ -340,6 +349,7 @@ class ToeplitzVisData(eqx.Module):
         self.pixel_scale_mas = float(pix)
         self.rotation_deg = float(image.rotation_deg)
         self.smooth_fwhm_mas = image.smooth_fwhm_mas
+        self.image_offset_mas = (dra, ddec)
         self.free_offsets = free
         self.max_shift_pix = float(bound)
         self.nyquist_fraction = tau
@@ -397,8 +407,8 @@ class ToeplitzVisData(eqx.Module):
         loss, gradient and ``derived``), but with no residual vector: fit
         with ``method="lbfgs"`` or ``"adam"``. ``scene(values)`` must be one
         [`Image`][virgil.models.Image] of this layout (alone, or the only
-        part of a [`System`][virgil.models.System]) at zero offset; the
-        observations' offsets are ``cal.offset``.
+        part of a [`System`][virgil.models.System]) at the template's fixed
+        ``dra``, ``ddec``; the observations' offsets are ``cal.offset``.
         """
         if isinstance(scene, SourceModel):
             raise TypeError(
@@ -430,20 +440,25 @@ class ToeplitzVisData(eqx.Module):
         chi2 = term.chi2_by_ddid(values)
         return onp.asarray(chi2), onp.asarray(self.arrays["count"], int)
 
-    def crosscheck(self, scene, values, nuisance):
+    def crosscheck(self, scene, values, nuisance, chunk_size=10_000_000):
         """The χ² per ddid and the loss both ways, and their largest
         relative difference.
 
         Returns a dict: ``chi2`` and ``chi2_direct`` per ddid, ``loss`` and
-        ``loss_direct`` (``½χ² + log_norm``), ``max_rel``.
+        ``loss_direct`` (``½χ² + log_norm``), ``max_rel``. ``chunk_size`` is
+        the direct term's.
         """
         scene = _as_function(scene)
         chi2 = self.chi2_by_ddid(scene, values, nuisance)[0]
-        direct = self.data.chi2_by_ddid(scene, values, nuisance, self.mask)[0]
+        direct = self.data.chi2_by_ddid(
+            scene, values, nuisance, self.mask, chunk_size=chunk_size
+        )[0]
         term = self.term(scene, nuisance)
         reduced, log_norm = term.chi2_and_log_norm(values)
         loss = float(0.5 * reduced + log_norm + term.loss_constant)
-        r, n = self.direct_term(scene, nuisance).residuals_and_log_norm(values)
+        r, n = self.direct_term(
+            scene, nuisance, chunk_size=chunk_size
+        ).residuals_and_log_norm(values)
         loss_direct = float(0.5 * np.sum(r**2) + n)
         rel = onp.abs(chi2 - direct) / onp.maximum(onp.abs(direct), 1e-300)
         rel_loss = abs(loss - loss_direct) / max(abs(loss_direct), 1e-300)
@@ -470,7 +485,7 @@ def _as_function(scene):
 
 def _single_image(scene):
     """``(image, offsets)``: the one Image of ``scene`` and every offset leaf
-    on the way to it (all must be zero)."""
+    on the way to it (their sum must be the template's)."""
     offsets = []
     model = scene
     while isinstance(model, System):
@@ -499,6 +514,7 @@ class _ToeplitzTerm(eqx.Module):
     scene: object = eqx.field(static=True)
     nuisance: object = eqx.field(static=True)
     layout: tuple = eqx.field(static=True)
+    image_offset_mas: tuple = eqx.field(static=True)
     ddid_obs: tuple = eqx.field(static=True)
     free_offsets: bool = eqx.field(static=True)
     max_shift_pix: float = eqx.field(static=True)
@@ -519,6 +535,7 @@ class _ToeplitzTerm(eqx.Module):
         self.scene = scene
         self.nuisance = nuisance
         self.layout = tdata.layout
+        self.image_offset_mas = tdata.image_offset_mas
         self.ddid_obs = tuple(int(e) for e in tdata.data.ddid_obs)
         self.free_offsets = tdata.free_offsets
         self.max_shift_pix = tdata.max_shift_pix
@@ -562,12 +579,16 @@ class _ToeplitzTerm(eqx.Module):
                 f"smooth_fwhm_mas) = {layout} differs from the precompute's "
                 f"{self.layout}."
             )
-        moved = sum(np.any(np.asarray(x) != 0.0) for x in offsets)
+        dra, ddec = sum(offsets[0::2]), sum(offsets[1::2])
+        moved = np.any(np.asarray(dra) != self.image_offset_mas[0]) | np.any(
+            np.asarray(ddec) != self.image_offset_mas[1]
+        )
         return eqx.error_if(
             image.brightness,
-            moved > 0,
-            "The Toeplitz term needs the scene's Image (and any System "
-            "around it) at zero offset; fit the offsets as cal.offset.",
+            moved,
+            "The Toeplitz term needs the scene's Image (with any System "
+            "around it) at the template's offset; fit the offsets as "
+            "cal.offset.",
         )
 
     def _shift(self, offset):

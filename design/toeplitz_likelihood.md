@@ -47,8 +47,9 @@ float64 differences that matter are not swamped by `Σw|V|²`.
   `ΣN sg(log1p(Δ/C))`, with constants `Σ2N` and `ΣN ln(C/2N)`: the same value and gradient as the direct
   profiled loss, without cancellation.
 - Scene checks: the scene must return one `Image` (alone, or the only part of a `System`) with the template's
-  shape, pixel scale, rotation and smoothing, at zero `dra`, `ddec` (checked at run time with
-  `eqx.error_if`, since they are traced under `jit`); offsets beyond the precompute's bound also raise at run
+  shape, pixel scale, rotation and smoothing, at the template's fixed `dra`, `ddec` (a known shift, such as
+  MPoL's half-pixel map convention, folded into the visibilities at the precompute as CASA's `fixvis` would;
+  checked at run time with `eqx.error_if`, since they are traced under `jit`); offsets beyond the precompute's bound also raise at run
   time.
 - Refused: antenna gains, a fitted α, other components, float32 (at trace time), and, with offsets, baselines
   past the margin.
