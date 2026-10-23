@@ -1898,6 +1898,12 @@ class Image(Component):
     component, so unresolved sources stay analytic. Visibilities are the exact
     Fourier transform of the pixels, each a point at its centre.
 
+    A constant added to ``log_brightness`` changes nothing, so `fit` fixes it:
+    a free pixel array comes back as ``log`` of the pixel fluxes (summing
+    to one). A pixel whose optimum is zero flux has no finite
+    ``log_brightness``, and can fit far below the rest (-1e3 or lower, set by
+    rounding): read an image from ``brightness``, not from those values.
+
     Parameters
     ----------
     log_brightness : array-like, shape (nrow, ncol), or GaussianField
