@@ -44,6 +44,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged.
 - The release checklist no longer requires a mutation-testing kill rate.
 - The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
 
@@ -132,6 +133,7 @@ Measured on `src/virgil`, from v0.4.0 to 0.4.1:
 - **Lazier import.** `import virgil` no longer imports matplotlib.
 
 ### Added
+
 
 - `plot_field_draws`: three draws and an ensemble of cuts (principal axes, disk axes, or the azimuthal harmonics of a `MultipoleField`) for a Gaussian-process image prior or posterior, with an optional per-pixel S/N map. Figures in the imaging parts 3 and 5 and the multipole-disk pages.
 - Docs: the API index lists Radio CLEAN, Cross-validation and Short arcs; the fitting page documents `GaussNewtonMass` and its exceptions; the README names the `[radio]` and `[pipeline]` extras; the OIFITS writing sections are merged. Nine references checked against ADS (Högbom, Clark, Schwab, Briggs, Offringa, Quirrenbach, Thiele, Bekas, Hutchinson).

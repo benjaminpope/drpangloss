@@ -295,6 +295,23 @@ def _azimuthal_filter(latent, angle, nu):
     return np.real(np.fft.ifft(amplitude * np.fft.fft(latent, axis=1), axis=1))
 
 
+def _regular_at_origin(field, nodes, spacing):
+    """Make order ``m`` of a polar field vanish as ``r^|m|`` at the origin.
+
+    A smooth single-valued field has Fourier coefficients ``a_m(r) ~ r^|m|``
+    (Zernike radial polynomials, Born & Wolf 1999 sec. 9.2). Each order is
+    scaled by ``tanh(r / spacing)^|m|``, which is 1 - O(2|m| e^(-2r/spacing)):
+    the prior is stationary away from the centre and only the first few
+    nodes of ``m >= 1`` shrink. Used only when the grid reaches the origin. Only the ``m = 0`` order
+    survives at ``r = 0``.
+    """
+    n_theta = field.shape[1]
+    j = np.arange(n_theta)
+    m = np.minimum(j, n_theta - j)
+    taper = np.tanh(nodes / spacing)[:, None] ** m[None, :]
+    return np.real(np.fft.ifft(taper * np.fft.fft(field, axis=1), axis=1))
+
+
 def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
     """Bilinear interpolation of a polar grid at ``(r, theta)``.
 
@@ -575,9 +592,12 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             self.latent, self.length_theta, self.nu_theta
         )
         # HIGHEST: the default matmul precision on A100/H100 is TF32.
-        return self.sigma * np.matmul(
+        field = self.sigma * np.matmul(
             factor, azimuthal, precision=jax.lax.Precision.HIGHEST
         )
+        if self.r_min_mas == 0:
+            field = _regular_at_origin(field, nodes, self.spacing)
+        return field
 
     def evaluate(self, pixel_scale_mas):
         """The log-brightness ``η`` on pixels of ``pixel_scale_mas``."""

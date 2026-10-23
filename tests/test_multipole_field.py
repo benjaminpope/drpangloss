@@ -12,6 +12,8 @@ from virgil._utils import mas2rad
 from virgil.coverage import vlti_oidata
 from virgil.fields import (
     MultipoleField,
+    _azimuthal_filter,
+    _radial_factor,
     multipole_field_priors,
     polar_interpolate,
 )
@@ -79,9 +81,26 @@ def test_covariance_is_the_radial_matern_times_the_multipolekernel_spectrum(
     d = onp.abs(r[:, None] - r[None]) / ell_r
     k_r = onp.exp(-0.5 * d * d) if onp.isinf(nu) else _matern(d, 1.0, nu)
     expected = sigma**2 * onp.kron(k_r, _azimuthal_covariance(N_T, ell_t, nu))
+    # The prior is the plain separable one with order m of node k scaled by
+    # tanh(r_k / spacing)^|m|: T_k is the circulant with that symbol.
+    mm = onp.minimum(onp.arange(N_T), N_T - onp.arange(N_T))
+    taper = onp.stack(
+        [
+            onp.real(
+                onp.fft.ifft(
+                    onp.tanh(rk / field.spacing) ** mm[:, None]
+                    * onp.fft.fft(onp.eye(N_T), axis=0),
+                    axis=0,
+                )
+            )
+            for rk in r
+        ]
+    )
+    block = onp.zeros((N_R * N_T, N_R * N_T))
+    for k in range(N_R):
+        block[k * N_T : (k + 1) * N_T, k * N_T : (k + 1) * N_T] = taper[k]
+    expected = block @ expected @ block.T
     assert onp.allclose(jac @ jac.T, expected, atol=2e-5 * sigma**2)
-    # sigma is the standard deviation of the field.
-    assert onp.mean(onp.diag(jac @ jac.T)) == pytest.approx(sigma**2, rel=1e-4)
 
 
 @pytest.mark.parametrize("nu_theta", [0.5, 1.5, onp.inf])
@@ -765,3 +784,38 @@ def test_the_multipole_kernel_spectrum_is_finite_for_a_long_angle():
         )
         spectrum = onp.asarray(kernel.spectrum(4))
         assert onp.all(onp.isfinite(spectrum)) and spectrum[0] == 1.0
+
+
+def test_the_field_is_single_valued_at_the_centre_and_stationary_away_from_it():
+    n_r, n_theta = 12, 16
+    z = onp.random.default_rng(0).normal(size=(600, n_r, n_theta))
+    kw = dict(image_shape=(8, 8), r_max_mas=11.0, r_min_mas=0.0, sigma=2.0)
+    vals = onp.stack(
+        [onp.asarray(MultipoleField(zi, **kw).polar_values()) for zi in z]
+    )
+    # r = 0: no azimuthal variation.
+    assert onp.abs(vals[:, 0, :] - vals[:, 0, :1]).max() < 1e-5
+    # Per-order variance: gone at node 0 for m >= 1, tanh(r/spacing)^(2m)
+    # at node 1, and unchanged eight spacings out (node 11 is the outermost
+    # node, node 8 is eight spacings out).
+    var = (onp.abs(onp.fft.fft(vals, axis=2)) ** 2).mean(axis=0) / n_theta
+    assert var[0, 3] < 1e-8
+    assert var[1, 3] / var[11, 3] == pytest.approx(
+        onp.tanh(1.0) ** 6, rel=0.15
+    )
+    assert var[8, 3] / var[11, 3] == pytest.approx(1.0, rel=0.15)
+
+
+def test_an_annulus_keeps_the_plain_prior():
+    z = onp.random.default_rng(1).normal(size=(N_R, N_T))
+    kw = dict(sigma=1.0, length_r=3.0, length_theta=1.0)
+    ring = MultipoleField(z, SHAPE, R_MAX, r_min_mas=2.0, **kw)
+    expected = ring.sigma * onp.asarray(
+        onp.matmul(
+            _radial_factor(
+                ring.r_min_mas + ring.spacing * onp.arange(N_R), 3.0, 1.5
+            ),
+            _azimuthal_filter(z, 1.0, 1.5),
+        )
+    )
+    assert onp.allclose(ring.polar_values(), expected, atol=1e-5)

@@ -359,6 +359,16 @@ projected major axis towards `pa + 90`, as for `MultipoleDisk`'s harmonics.
 Giving $\sigma$ and the two lengths bounded log-uniform priors makes the
 evidence proper.
 
+**Regularity at the centre.** With `r_min_mas=0` the field must be
+single-valued at $r=0$. A smooth 2D field has Fourier coefficients
+$a_m(r)\sim r^{|m|}$ (the Zernike radial polynomials, Born & Wolf, *Principles
+of Optics*, section 9.2), so order $m$ of $\eta$ is multiplied by
+$\tanh(r/\Delta r)^{|m|}$, with $\Delta r$ the node spacing. The factor is
+$1 - O(2|m|\,e^{-2r/\Delta r})$, so the prior is stationary away from the
+centre (the variance of order $m$ is within $4|m|e^{-10}$ of $\sigma^2$ beyond
+five spacings); the latents stay whitened and only $m=0$ is free at $r=0$. It is
+applied only when `r_min_mas = 0`; an annulus keeps the plain prior.
+
 **Geometry.** By default the geometry parameters belong to the field: they are
 copies of a `MultipoleDisk`'s (see
 [`from_disk`][virgil.fields.MultipoleField.from_disk]), and if both are fitted
