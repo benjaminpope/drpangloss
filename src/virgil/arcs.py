@@ -140,7 +140,7 @@ class CycleCounts:
 # ---------------------------------------------------------------------------
 
 
-def _halves(d):
+def _halves(d):  # deliberate: test seam
     """``[(part, time), (part, time)]``: ``d`` split into its earlier and
     later frames, or None (one frame, no times, or data that cannot be
     split)."""
@@ -165,7 +165,7 @@ def _halves(d):
     return parts
 
 
-def _half_position(part, x0, resolution, diam):
+def _half_position(part, x0, resolution, diam):  # deliberate: test seam
     """The refined ``(dra, ddec)`` of ``part`` from ``x0`` and its
     covariance, or None if the refinement fails."""
     window = _REFINE_WINDOW * resolution
@@ -208,19 +208,12 @@ def night_motion(
 ):
     """Each night's angular velocity, from the positions of its two halves.
 
-    Each night's frames are split in time into an earlier and a later half;
-    each half's position is refined from the night's
-    ([`epoch_positions`][virgil.epochs.epoch_positions]) on the same
-    scale-marginalized surface, with the same primary. The velocity is their
-    difference over the time between them, with the halves' covariances,
-    each with a floor of ``jitter`` λ/B_max added in quadrature: the halves
-    see different uv coverage, so their biases need not cancel. The
-    covariances come from a surface that treats the channels as independent:
-    ``cov_scale`` (the effective-channel factor ``f`` of the tempering)
-    multiplies them (σ by its square root) before the floor, as ``1/f``
-    multiplies the evidence.
-    A night with one frame, or whose halves move to another peak (more than
-    ``max_shift`` λ/B_max), has none.
+    Each night's frames are split into an earlier and a later half, each
+    refined from the night's
+    ([`epoch_positions`][virgil.epochs.epoch_positions]) position. The
+    velocity is the difference over the time between them, with a covariance
+    floor of ``jitter`` λ/B_max. A night with one frame, or whose halves move
+    more than ``max_shift`` λ/B_max, has none.
 
     Parameters
     ----------
@@ -228,23 +221,16 @@ def night_motion(
         The nights, in the order of ``positions``.
     positions : EpochPositions
         Each night's position.
-    max_shift : float, optional
-        The furthest a half may move from the night's position, in units of
-        the night's λ/B_max (default 0.5).
-    jitter : float, optional
-        Each half's position floor, in units of the night's λ/B_max
-        (default ``ARC_JITTER``).
+    max_shift, jitter : float, optional
+        The furthest a half may move from the night's position, and each
+        half's position floor, in λ/B_max (defaults 0.5, ``ARC_JITTER``).
     cov_scale : float, optional
-        The factor (at least 1) multiplying the halves' covariances, so
-        their σ by its square root (default 1).
+        Factor (at least 1) multiplying the halves' covariances, σ by its
+        square root (default 1).
 
     Returns
     -------
     NightMotion
-
-    Examples
-    --------
-    >>> motion = night_motion(data, positions)  # doctest: +SKIP
     """
     _check_cov_scale(cov_scale)
     sets = list(data.data) if isinstance(data, Epochs) else list(data)
@@ -374,7 +360,9 @@ def _arc(positions, motion, jitter_mas, cov_scale=1.0):
 
 
 @jax.jit
-def _pv_fit(t, r, wr, v, wv, period, dt_peri, ecc):
+def _pv_fit(
+    t, r, wr, v, wv, period, dt_peri, ecc
+):  # deliberate: jit/vmap boundary, test seam
     """Least-squares ``(A, B, F, G)`` and χ² of positions and velocities at
     one grid point: velocities are linear in the constants too."""
 
@@ -448,7 +436,9 @@ _STEPS = onp.stack(
 ).reshape(-1, 3)
 
 
-def _polish(arc, grid, chi2, steps, ecc_max, n_iter=4):
+def _polish(
+    arc, grid, chi2, steps, ecc_max, n_iter=4
+):  # deliberate: test seam
     """Each grid period's χ² minimum, lowered by a pattern search in
     ``(period, dt_peri, ecc)`` about its best grid point, halving
     ``steps`` (``(n, 3)``) each time: a coarse grid only bounds the
@@ -502,43 +492,31 @@ def unwrap_cycles(
 ):
     """The periods that the short arcs admit, unwrapping the cycle counts.
 
-    The nights are joined into arcs shortest gap first. At each step whose
-    arc has more measured coordinates than the seven parameters of an orbit,
-    each admissible period (on a grid that stays in phase across the arc) is
-    scored by its best Thiele–Innes fit to the arc's positions and
-    velocities, over the eccentricity, the time of periastron and every
-    orientation and size (a grid, polished locally about its best point),
-    and kept while its χ² is within
-    ``delta_chi2 * max(1, chi2_min / dof)`` of the best. Each longer gap
-    so admits only the cycle counts the shorter arcs allow. Too few data
-    leave the whole window: weak constraints keep more periods, never fewer.
+    The nights are joined into arcs shortest gap first. Where an arc has more
+    measured coordinates than the seven orbital parameters, each period on a
+    grid in phase across it is scored by its best Thiele–Innes fit to the
+    positions and velocities, and kept while its χ² is within
+    ``delta_chi2 * max(1, chi2_min / dof)`` of the best. Too few data leave
+    the whole window: weak constraints keep more periods, never fewer.
 
     Parameters
     ----------
     positions : PositionData
         The nights' positions.
     motion : NightMotion, optional
-        The same nights' velocities ([`night_motion`][virgil.arcs.night_motion]).
+        The nights' velocities ([`night_motion`][virgil.arcs.night_motion]).
     p_range : (float, float)
         The period window (days).
     ecc_max, jitter_mas, cov_scale, delta_chi2, k, eccs : optional
-        The largest eccentricity; a position floor (mas) added in quadrature;
-        the factor (at least 1) multiplying the positions' covariances (σ by
-        its square root), the effective-channel factor of the tempering, with
-        the velocities' ``cov_scale`` in
-        [`night_motion`][virgil.arcs.night_motion]; the
-        χ² margin; the phase coherence of the period grids
-        ([`period_grid`][virgil.orbits.period_grid]); trial eccentricities
-        (default 0 to ``ecc_max`` in steps of 0.05).
+        The largest eccentricity; a position floor (mas); the factor (at
+        least 1) multiplying the positions' covariances, σ by its square
+        root; the χ² margin; the
+        phase coherence of the period grids; trial eccentricities (default 0
+        to ``ecc_max`` in steps of 0.05).
 
     Returns
     -------
     CycleCounts
-
-    Examples
-    --------
-    >>> counts = unwrap_cycles(positions, motion, p_range=(2.0, 1600.0))  # doctest: +SKIP
-    >>> [b for b in alias_bands(times, (2.0, 1600.0)) if counts.admits(b)]  # doctest: +SKIP
     """
     arc = _arc(positions, motion, jitter_mas, cov_scale)
     eccs = _eccs(eccs, ecc_max)
@@ -668,7 +646,7 @@ def arc_profile(
     return rows
 
 
-def _jittered(positions, jitter_mas, cov_scale=1.0):
+def _jittered(positions, jitter_mas, cov_scale=1.0):  # deliberate: test seam
     """``positions`` with their covariances times ``cov_scale`` and
     ``jitter_mas`` added in quadrature."""
     if not jitter_mas and cov_scale == 1.0:

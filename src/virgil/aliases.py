@@ -220,27 +220,20 @@ def period_window(
 ):
     """The periods worth searching, from the data alone: ``(p_min, p_max)``.
 
-    The lower end is a Nyquist-style sampling limit, ``2 pi field night_length /
-    (motion_fraction resolution)``, at least ``night_length`` and ``p_floor``: the
-    companion must not move much during a night. The upper end is ``span_factor``
-    times the span. No published period enters
-    ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)).
+    The lower end is a Nyquist-style sampling limit (the companion must not move
+    much in a night); the upper end is ``span_factor`` times the span. No published
+    period enters ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)).
 
     Parameters
     ----------
     times : array-like
         The epochs' times (days).
-    field : float
-        The largest separation (mas) the companion is taken to have
-        ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] uses the median
-        unflagged night separation, or the coarsest fringe spacing).
-    night_length : float
-        The longest span (days) of observations within one night.
-    resolution : float
-        The finest resolution lambda/B_max (mas).
+    field, night_length, resolution : float
+        The largest companion separation (mas), the longest span within one night
+        (days) and the finest resolution lambda/B_max (mas).
     motion_fraction, span_factor, p_floor : float, optional
-        Fraction of ``resolution`` the companion may move in a night, the upper end
-        in spans (default 4), and the shortest period in days (default 0.2).
+        Fraction of ``resolution`` moved in a night (0.5), upper end in spans (4),
+        shortest period in days (0.2).
 
     Returns
     -------
@@ -251,10 +244,6 @@ def period_window(
     ------
     ValueError
         If the epochs span no time, an input is not positive, or the window is empty.
-
-    Examples
-    --------
-    >>> period_window([0.0, 30.0, 400.0], 5.0, 0.1, resolution=2.0)  # doctest: +SKIP
     """
     times = onp.asarray(times, float)
     span = float(onp.ptp(times))
@@ -287,6 +276,7 @@ def period_window(
     return float(p_min), float(p_max)
 
 
+# deliberate: a test seam (tests call or patch it)
 def _night_length(data, gap_days=0.5):
     """The longest night's span (days): the longest run of frame times with
     no gap above ``gap_days`` (as ``OIData.epochs(gap_days=0.5)`` groups
@@ -303,6 +293,7 @@ def _night_length(data, gap_days=0.5):
     return longest
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _cap_bands(times, p_range, n_max):
     """``(p_range, wanted)``: the window with its lower end raised until it
     holds at most ``n_max`` alias bands, and the lower end that was wanted
@@ -539,6 +530,7 @@ _hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
 
 
 @functools.partial(jax.jit, static_argnums=(0, 3, 6))
+# deliberate: jit boundary: static batch_size for lax.map
 def _batch(surfaces, xs, data, cfg, dof, mix=None, batch_size=64):
     """``_loglike`` at each row of ``xs``, ``batch_size`` rows at a time."""
     return jax.lax.map(
@@ -555,6 +547,7 @@ def _batch(surfaces, xs, data, cfg, dof, mix=None, batch_size=64):
 _HESSIAN_COPIES = 8000
 
 
+# deliberate: a test seam (tests call or patch it)
 def _hessian_groups(memory_budget, data, surfaces):
     """Slices of the nights whose Hessians fit ``memory_budget`` bytes each:
     one slice (the fused evaluation) for plain data or a roomy budget."""
@@ -580,6 +573,7 @@ def _hessian_groups(memory_budget, data, surfaces):
     return groups
 
 
+# deliberate: a test seam (tests call or patch it)
 def _candidate_batch(batch_size, memory_budget, data, surfaces):
     """Orbits per batch of candidates: 64 (as ever) for plain data, fewer
     when gains or offsets make each epoch's scale integral hold many
@@ -989,6 +983,7 @@ class _Draws:
     proposal: _Proposal
 
 
+# deliberate: a named step of _mode_evidence, 18 lines
 def _laplace_proposal(h, x, df):
     """The Student-t proposal from the negative Hessian ``h`` at ``x``, or
     the flag that says why there is none."""
@@ -1009,6 +1004,7 @@ def _laplace_proposal(h, x, df):
     return _Proposal(x, chol, l_inv, logdet, df), None
 
 
+# deliberate: a test seam (tests call or patch it)
 def _mode_evidence(
     problem, bounds, x, value, n_is, rng, df=5.0, bound_sigma=3.0
 ):
@@ -1073,6 +1069,7 @@ def _mode_evidence(
     return out, _Draws(xs, log_t, log_w, proposal)
 
 
+# deliberate: a test seam (tests call or patch it)
 def _mixture_weights(draws):
     """Log weights of the pooled draws of a band's modes under their
     deterministic mixture proposal, ``p / mean_k q_k``: the modes' tails
@@ -1128,10 +1125,10 @@ def _candidates(settings, band, bounds, rng, orbits):
     return onp.asarray(pool)
 
 
-def _init_orbit(settings):
-    """The warm start's ``(KeplerOrbit, flux)``, or None."""
+def _init_starts(settings, band, bounds):
+    """The warm start (``init=``) as a start vector in ``band``."""
     if settings.init is None:
-        return None
+        return []
     period, dt_peri, ecc, inc, omega, big_omega, a_mas, flux = settings.init
     orbit = KeplerOrbit(
         period,
@@ -1143,18 +1140,11 @@ def _init_orbit(settings):
         a_mas,
         t_ref=settings.t_ref,
     )
-    return orbit, flux
-
-
-def _init_starts(settings, band, bounds):
-    """The warm start (``init=``) as a start vector in ``band``."""
-    start = _init_orbit(settings)
-    if start is None:
-        return []
     diam = settings.diam_seed if settings.fit_diam else None
-    return [_start_vector(*start, settings.t_ref, band, bounds, diam)]
+    return [_start_vector(orbit, flux, settings.t_ref, band, bounds, diam)]
 
 
+# deliberate: a test seam (tests call or patch it)
 def _flipped(x, settings, bounds):
     """``x`` with the stars' labels swapped: the same sky orbit seen from
     the other star (ω + 180°, the same elements otherwise) and the flux
@@ -1194,6 +1184,7 @@ def _distinct(modes, times, t_ref, min_distance_mas):
     return [modes[k] for k in _distinct_tracks(tracks, min_distance_mas)]
 
 
+# deliberate: a test seam (tests call or patch it)
 def _refine(problem, settings, bounds, pool, times, forced=()):
     """Rank the candidates by the observables and refine the best distinct
     few into modes.
@@ -1257,6 +1248,7 @@ def _plain(problem):
     return problem.without_mixture()
 
 
+# deliberate: a test seam (tests call or patch it)
 def _polish(problem, bounds, x, max_steps):
     """A mode refit under ``problem`` (the outlier mixture) from the plain
     fit's ``x``: ``(x, loglike)``. A mode the polish cannot improve keeps
@@ -1273,6 +1265,7 @@ def _polish(problem, bounds, x, max_steps):
     return polished, value
 
 
+# deliberate: a test seam (tests call or patch it)
 def _band_evidence(problem, settings, bounds, modes_xy, rng):
     """Every mode's evidence, and the band's: the Laplace sum ``z_lap``
     and the mixture importance-sampling estimate ``z_is``.
@@ -1308,6 +1301,7 @@ def _band_evidence(problem, settings, bounds, modes_xy, rng):
     return modes, z_lap, z_is, (xs, log_w)
 
 
+# deliberate: a test seam (tests call or patch it)
 def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     """The band's flags, best mode, χ²/ν and per-epoch scales."""
     live = [m for m in modes if onp.isfinite(m["log_z"])]
@@ -1352,12 +1346,14 @@ def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     )
 
 
+# deliberate: a test seam (tests call or patch it)
 def _pinned(x, bounds, tol=0.02):
     """Whether the flux ratio sits at the top of its range (within ``tol`` in
     log flux): a fit that wants a ratio above the range."""
     return bool(x[7] >= bounds.upper[7] - tol)
 
 
+# deliberate: a named step of a long caller, too large to fold in
 def _flip_modes(problem, settings, bounds, modes_xy, times):
     """Refit each mode whose flux ratio sits at the top of ``flux_range``
     from the same orbit with the stars' labels swapped (the ratio is then
@@ -1404,6 +1400,7 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
     return merged, flips, n_failed
 
 
+# deliberate: a test seam (tests call or patch it)
 def _flip_is_relabelling(problem, settings):
     """The swap is a relabelling of one sky orbit only for two point
     sources and no differential phases (a resolved primary stays on the
@@ -1414,6 +1411,7 @@ def _flip_is_relabelling(problem, settings):
     )
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _is_flipped(result, flips, settings, times):
     """Whether the band's best mode is one of the relabelled refits."""
     if not flips or not result.modes:
@@ -1432,6 +1430,7 @@ def _is_flipped(result, flips, settings, times):
     )
 
 
+# deliberate: a test seam (tests call or patch it)
 def _labels_free(result, settings, times, nats=LABELS_FREE_NATS):
     """Whether a mode whose track is the point reflection of the best
     mode's has an evidence within ``nats`` of it.
@@ -1477,6 +1476,7 @@ def _track(x, t_ref, times):
     return onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
 
 
+# deliberate: a test seam (tests call or patch it)
 def _fit_band(problem, settings, band, orbits, times):
     """Fit one band: ``(AliasBandResult, (draws, log weights))``.
 
@@ -1520,6 +1520,7 @@ def _fit_band(problem, settings, band, orbits, times):
     return result, draws
 
 
+# deliberate: a test seam (tests call or patch it)
 def _preflight(problem, settings, band):
     """Evaluate the likelihood and its gradient once, at the centre of the
     first band's bounds, outside any ``try``: misconfiguration (bad data,
@@ -1532,6 +1533,7 @@ def _preflight(problem, settings, band):
     problem.value_and_grad(np.asarray(centre))
 
 
+# deliberate: a test seam (tests call or patch it)
 def _failed_band(band, error):
     """The row of a band that raised (flag ``band-failed``)."""
     return AliasBandResult(
@@ -1555,6 +1557,7 @@ def _failed_band(band, error):
 _CHECKPOINT_FORMAT = 6  # bump when a checkpoint's contents change
 
 
+# deliberate: a test seam (tests call or patch it)
 def _checkpoint_key(data, positions, bands, times, settings):
     """What a band's checkpoint depends on: the data (every field, static
     ones included), the positions, the bands and all settings.
@@ -1585,6 +1588,7 @@ def _band_files(directory, band):
     return d / f"band_{band.n}.pkl", d / f"band_{band.n}.json"
 
 
+# deliberate: a test seam (tests call or patch it)
 def _load_band(directory, band, key):
     """A band's checkpoint, or None if there is none or it is for other
     settings."""
@@ -1599,6 +1603,7 @@ def _load_band(directory, band, key):
     return done if saved_key == clean_json(key) else None
 
 
+# deliberate: a test seam (tests call or patch it)
 def _save_band(directory, band, key, done):
     """Write a band's checkpoint atomically (pickle to reload, JSON to read)."""
     if directory is None:
@@ -1624,28 +1629,21 @@ def _save_band(directory, band, key, done):
 class AliasBandResult:
     """The fit of one alias band (see [`AliasResult`][virgil.aliases.AliasResult]).
 
-    The band also records what it needs to rebuild its scene (``t_ref``,
-    ``primary_diam``, ``vis_amp``), which back
-    [`scene`][virgil.aliases.AliasBandResult.scene],
-    [`residuals`][virgil.aliases.AliasBandResult.residuals] and
-    [`chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night]. A band from
-    a legacy file lacking them has ``UNRECORDED`` and the accessors raise unless
-    [`AliasResult.load`][virgil.aliases.AliasResult.load] was given them.
+    A band from a legacy file lacking ``t_ref``, ``primary_diam`` or ``vis_amp``
+    has ``UNRECORDED``, and ``scene``, ``residuals`` and ``chi2_per_night`` raise
+    unless [`AliasResult.load`][virgil.aliases.AliasResult.load] was given them.
 
     Attributes
     ----------
     t_ref : float or None
         Reference time (MJD) of ``best["dt_peri"]``.
     primary_diam : float, ``"fit"`` or None
-        A point (None), a uniform disk of this diameter (mas), or one fitted
-        (``best["diam"]``).
+        A point (None), a uniform disk (mas), or one fitted (``best["diam"]``).
     vis_amp : tuple or None
-        Range of the per-epoch V^2 amplitude if fitted (values in ``epochs``).
-    flipped : bool
-        The best mode has the stars' labels swapped (flux flip).
-    labels_free : bool
-        A point-reflected partner is within ``LABELS_FREE_NATS`` of the best mode:
-        the data do not say which star is which.
+        Range of the per-epoch V^2 amplitude if fitted.
+    flipped, labels_free : bool
+        The best mode has the stars' labels swapped; a point-reflected partner is
+        within ``LABELS_FREE_NATS`` of it.
     """
 
     n: int
@@ -1678,29 +1676,23 @@ class AliasBandResult:
     def scene(self, params=None):
         """The scene the band was fitted with, at its best orbit.
 
-        A point or uniform-disk primary and one orbiting point companion, built from
-        ``best`` (or ``params``) exactly as the fit's likelihood builds it. If the
-        labels were swapped in the fit (``flipped``), the scene is the swapped one.
+        Built from ``best`` (or ``params``) as the fit's likelihood builds it;
+        the swapped scene if ``flipped``.
 
         Parameters
         ----------
         params : dict, optional
-            Elements (``period``, ``dt_peri``, ``ecc``, ``inc``, ``omega``, ``Omega``,
-            ``a_mas``, ``flux``, and ``diam`` only if the diameter was fitted) to use
-            instead of ``best``, e.g. a published orbit scored with the band's model.
+            Elements to use instead of ``best`` (``diam`` only if fitted).
 
         Returns
         -------
         virgil.models.OrbitalBinary
-            With a resolved primary, the same with a uniform-disk primary. Evaluate
-            with ``.at(mjd, t_ref)`` or pass to
-            [`whitened_residuals`][virgil.likelihood.whitened_residuals].
 
         Raises
         ------
         ValueError
-            If the band failed (no best orbit), has no ``t_ref``, or ``primary_diam``
-            is unrecorded (``UNRECORDED``) or inconsistent with ``params``.
+            If the band failed, has no ``t_ref``, or ``primary_diam`` is
+            ``UNRECORDED`` or inconsistent with ``params``.
         """
         b = self.best if params is None else params
         if not b:
@@ -1785,26 +1777,22 @@ class AliasBandResult:
     def residuals(self, data, params=None):
         """Whitened residuals of ``data`` at the best orbit, block by block.
 
-        The residuals the fit's likelihood is built from
-        ([`whitened_residuals`][virgil.likelihood.whitened_residuals] of
-        [`scene`][virgil.aliases.AliasBandResult.scene] on the quoted errors), in
-        float64, with each epoch's V^2 amplitude re-profiled if the fit had one. They
-        use virgil's own model, so they check the bookkeeping, not the model.
+        The fit's own residuals on the quoted errors (float64, V^2 amplitude
+        re-profiled), from virgil's model: they check the bookkeeping, not the model.
 
         Parameters
         ----------
         data : sequence of OIData
-            The epochs the band was fitted to, in the same order.
+            The epochs the band was fitted to, in order.
         params : dict, optional
             Elements to use instead of ``best``; see ``scene``.
 
         Returns
         -------
         list of dict
-            One ``{block name: residuals}`` per epoch, in the order of the whitened
-            residual vector (the penalty rows of correlated closure phases are the
-            last rows of ``"phi"``).
-
+            One ``{block name: residuals}`` per epoch, in whitened-residual order
+            (the penalty rows of correlated closure phases are the last rows of
+            ``"phi"``).
         Raises
         ------
         ValueError
@@ -1817,26 +1805,22 @@ class AliasBandResult:
     def chi2_per_night(self, data, params=None):
         """Raw chi-squared and its count of independent observables, per night.
 
-        On the quoted errors (no error scales), at the best orbit with the V^2
-        amplitude re-profiled, in float64: the quantity to quote against a paper's
-        chi-squared/N. ``chi2`` counts only the ``n`` independent observables;
-        ``chi2_fit`` is what the fit used, adding the periodic penalty rows of
-        correlated closure phases (four or more telescopes; see
-        [`whitened_residuals`][virgil.likelihood.whitened_residuals]).
+        On the quoted errors, at the best orbit. ``chi2`` counts only the ``n``
+        independent observables; ``chi2_fit`` adds the fit's penalty rows.
 
         Parameters
         ----------
         data : sequence of OIData
-            The epochs the band was fitted to, in the same order.
+            The epochs the band was fitted to, in order.
         params : dict, optional
             Elements to use instead of ``best``; see ``scene``.
 
         Returns
         -------
         list of dict
-            One per epoch: ``chi2``, ``chi2_fit``, ``n``, ``chi2_per_n``,
-            ``chi2_per_n_fit``, ``vis_amp`` and ``blocks`` (the same sums per
-            observable block). Sum ``chi2`` and ``n`` over nights for a pooled value.
+            Per epoch: ``chi2``, ``chi2_fit``, ``n``, ``chi2_per_n``,
+            ``chi2_per_n_fit``, ``vis_amp`` and ``blocks``. Sum ``chi2`` and ``n``
+            over nights for a pooled value; do not average ``chi2_per_n``.
 
         Raises
         ------
@@ -1896,38 +1880,29 @@ class AliasResult:
     Attributes
     ----------
     t_ref, times, span : float, numpy.ndarray, float
-        Reference time of ``dt_peri``, the epochs' mean times (MJD), the span (days).
+        Reference time of ``dt_peri``, epochs' mean times (MJD), span (days).
     bands : list of AliasBandResult
         One per alias band, by decreasing ``log_z``.
     samples : dict
-        ``{N: {name: array}}`` draws in the best band and those with ``p > p_min_samples``.
+        ``{N: {name: array}}`` draws for the best band and those with ``p > p_min_samples``.
     positions : list of dict or None
         Per-band position diagnostic (not saved).
     primary_diam, vis_amp, p_range : optional
         The primary, the V^2 amplitude range, the period window (days).
     period_bound, period_at_lower_bound : bool
-        ``period_bound``: the period is unconstrained (best P within 10% of the
-        top of ``p_range``, or σ(log P) at least a quarter of the window);
-        ``period_at_lower_bound``: best P within 10% of the bottom, where the
-        sampling limit may have cut the truth.
-    window_capped, primary_fit : float or None, dict or None
-        Lower end wanted when a default window was capped; the
-        ``primary_diam="auto"`` estimate.
-    temper_f, temper_blocks, temper_f_raw, temper_rho, unseeded : optional
-        Likelihood tempering ([`virgil.tempering`][virgil.tempering]); flagged
-        nights that seeded nothing.
-    prior : dict or None
-        Prior ranges a sampler needs to rebuild the posterior.
-    outlier : dict or None
-        The outlier mixture, if any: ``eps``, night ``names`` and each night's
-        outlier ``probability`` at the best orbit (near 1: the fit ignored it).
-    night_flags : dict or None
-        ``{night: {"code", "reason"}}`` of nights preferring another peak
-        ([`sidelobe_flags`][virgil.epochs.sidelobe_flags]); reported only.
-    short_arc : dict or None
-        The short-arc stage (``intervals``, ``kept``, ``excluded``, ``readmitted``,
-        ``seed_scores``, ``velocities``, ``steps``); None when off. The bands'
-        ``p`` are then conditional on the bands fitted.
+        The period is unconstrained (near the window's top, or a flat likelihood);
+        the best P is within 10% of the bottom, where the sampling limit may have
+        cut the truth.
+    window_capped, primary_fit, unseeded, prior : optional
+        Lower end wanted when a default window was capped; the ``"auto"``
+        estimate; flagged nights that seeded nothing; prior ranges.
+    temper_f, temper_blocks, temper_f_raw, temper_rho : optional
+        Likelihood tempering ([`virgil.tempering`][virgil.tempering]).
+    outlier, night_flags, short_arc : dict or None
+        Outlier mixture (``eps``, ``names``, ``probability``; near 1: the fit
+        ignored the night); ``{night: {"code", "reason"}}`` of nights preferring
+        another peak (reported only); the short-arc stage (band ``p`` is then
+        conditional on the bands fitted).
     """
 
     t_ref: float
@@ -2050,10 +2025,24 @@ class AliasResult:
         [`AliasBandResult.chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night]."""
         return self.best.chi2_per_night(data, params)
 
-    def _payload(self, n_samples):
-        """The JSON-ready dict of ``to_json`` and ``save``: ``n_samples``
-        draws per band (all if None)."""
-        return dict(
+    def to_json(self, path, n_samples=0):
+        """Write the band table and each band's modes to ``path`` as JSON.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write.
+        n_samples : int or None, optional
+            Posterior draws written per band: none by default, the first
+            ``n_samples``, or, with ``None``, all of them (what
+            [`save`][virgil.aliases.AliasResult.save] does).
+
+        Notes
+        -----
+        [`load`][virgil.aliases.AliasResult.load] reads the file back.
+        ``positions`` is not written.
+        """
+        payload = dict(
             format=_RESULT_FORMAT,
             t_ref=self.t_ref,
             times=self.times.tolist(),
@@ -2083,31 +2072,8 @@ class AliasResult:
             if n_samples is None or n_samples
             else {},
         )
-
-    def to_json(self, path, n_samples=0):
-        """Write the band table and each band's modes to ``path`` as JSON.
-
-        Parameters
-        ----------
-        path : str or os.PathLike
-            The file to write.
-        n_samples : int or None, optional
-            Posterior draws written per band: none by default, the first
-            ``n_samples``, or, with ``None``, all of them (what
-            [`save`][virgil.aliases.AliasResult.save] does).
-
-        Notes
-        -----
-        [`load`][virgil.aliases.AliasResult.load] reads the file back.
-        ``positions`` is not written.
-        """
         with open(path, "w") as f:
-            json.dump(
-                clean_json(self._payload(n_samples)),
-                f,
-                indent=1,
-                default=str,
-            )
+            json.dump(clean_json(payload), f, indent=1, default=str)
 
     def save(self, path):
         """Write the whole result to ``path`` as JSON, every posterior draw
@@ -2120,31 +2086,21 @@ class AliasResult:
 
     @classmethod
     def load(cls, path, primary_diam=UNRECORDED, vis_amp=UNRECORDED):
-        """Read a result written by
-        [`save`][virgil.aliases.AliasResult.save] (or
-        [`to_json`][virgil.aliases.AliasResult.to_json]).
+        """Read a result written by [`save`][virgil.aliases.AliasResult.save] or
+        [`to_json`][virgil.aliases.AliasResult.to_json].
 
         Parameters
         ----------
         path : str or os.PathLike
             The JSON file.
         primary_diam, vis_amp : optional
-            The fit's settings, for a file written before they were saved
-            (they would otherwise stay
-            ``UNRECORDED``, except that a
-            fitted diameter is recognized from the best orbit, and the accessors
-            would raise instead of guessing a point primary or no V²
-            amplitude). Given for a file that does record them, they
-            override it.
+            Settings for a file written before they were saved (else the accessors
+            raise); they override a file that records them.
 
         Returns
         -------
         AliasResult
-            With every band's modes, evidences, flags, best orbit, per-epoch
-            ``epochs`` and ``flipped``, the resampled ``samples`` (those
-            written; none after ``to_json`` with the default
-            ``n_samples=0``), and the settings the accessors need, so
-            ``scene``, ``residuals`` and ``chi2_per_night`` work on it.
+            ``samples`` are those written (none after ``to_json`` with the default);
             ``positions`` is None.
         """
         with open(path) as f:
@@ -2216,6 +2172,7 @@ def _nan_for_none(value):
     return value
 
 
+# deliberate: a named step of a long caller, too large to fold in
 def _band_from_dict(d):
     """An [`AliasBandResult`][virgil.aliases.AliasBandResult] from its
     ``dataclasses.asdict`` JSON, restoring what ``clean_json`` made null.
@@ -2275,6 +2232,7 @@ def _physical(x):
     )
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _band_probabilities(results):
     """Set each band's ``p`` from its ``log_z`` and return the bands in order
     of decreasing ``log_z``."""
@@ -2299,6 +2257,7 @@ def _band_probabilities(results):
 _POOR_FIT_CHI2_RED = 10.0
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _check_fit_quality(results, k):
     """Flag, and warn about, a best band that does not fit the data."""
     best = results[0]
@@ -2324,6 +2283,7 @@ _N_RANDOM_FEW = 200  # random candidates beside seeds from few nights
 _N_RANDOM_NONE = 1000  # random candidates when nothing seeds
 
 
+# deliberate: a test seam (tests call or patch it)
 def _seeding_positions(positions, t_ref, skip_flagged, times):
     """The ``PositionData`` that seeds the bands, the nights it skipped and
     whether the seeds fell back to random starts.
@@ -2393,6 +2353,7 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     return positions, skipped, False
 
 
+# deliberate: a test seam (tests call or patch it)
 def _signs_trusted(positions, min_gap, temper_f=1.0):
     """Whether every unflagged night (``EpochPositions``) has a decided
     sign: a ``gap_marginal`` of at least ``min_gap`` nats over its rivals,
@@ -2410,6 +2371,7 @@ def _signs_trusted(positions, min_gap, temper_f=1.0):
     return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
+# deliberate: a test seam (tests call or patch it)
 def _short_arc_profile(
     data,
     seed_positions,
@@ -2481,6 +2443,7 @@ def _seed_scores(problem, settings, bands, seeds):
     return {b.n: float(score[owner == b.n].max()) for b in bands}
 
 
+# deliberate: a test seam (tests call or patch it)
 def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
     """The bands to fit, and ``AliasResult.short_arc``.
 
@@ -2528,6 +2491,7 @@ def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
     )
 
 
+# deliberate: a test seam (tests call or patch it)
 def _check_seed_diameter(positions, primary_diam):
     """Warn when ``EpochPositions`` were fitted with another primary than
     the engine's: the seeds then carry the bias of the wrong star."""
@@ -2557,6 +2521,7 @@ def _check_seed_diameter(positions, primary_diam):
         )
 
 
+# deliberate: a test seam (tests call or patch it)
 def _default_vis_amp(data):
     """``_VIS_AMP_DEFAULT`` when every dataset has squared visibilities as
     its visibility channel (what ``vis_amp`` needs), else None (logged at
@@ -2749,6 +2714,7 @@ def _temper_factors(data, positions, diam, vis_amp, names):
 _INADEQUATE_F = 3.0
 
 
+# deliberate: a test seam (tests call or patch it)
 def _warn_tempering(factors, calibrated=False):
     """Warn about estimated tempering the fit cannot trust (a block ``f``
     outside ``FLAG_RANGE``, blocks on the pooled ``f``, a flat correlation).
@@ -2819,6 +2785,7 @@ def _primary_fit_record(estimate):
     )
 
 
+# deliberate: a test seam (tests call or patch it)
 def _field_mas(positions, a_range, fallback):
     """The separation (mas) the period window's sampling limit uses: the
     *median* of the positions' separations (one wrong alias peak must not
@@ -2837,6 +2804,7 @@ def _field_mas(positions, a_range, fallback):
     return float(min(max(float(onp.median(sep)), 1e-3), a_range[1]))
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _period_flags(results, p_range):
     """``(period_bound, period_at_lower_bound)`` of the best band.
 
@@ -2868,6 +2836,7 @@ def _period_flags(results, p_range):
     )
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _resample(results, store, n_samples, p_min, seed):
     """Posterior draws by importance resampling, for the best band and every
     band with ``p > p_min``."""
@@ -2893,6 +2862,7 @@ def _resample(results, store, n_samples, p_min, seed):
 # ``tests/test_pipeline_orbit.py`` at hand.
 
 
+# deliberate: a named step of a long caller, too large to fold in
 def _with_outlier(
     problem,
     settings,
@@ -2947,6 +2917,7 @@ def _with_outlier(
     )
 
 
+# deliberate: a named step of a long caller, too large to fold in
 def _night_diagnostics(problem, settings, result, positions, data, t_ref):
     """``(outlier, night_flags)`` of ``AliasResult``: the mixture's
     posterior outlier probabilities and the sidelobe flags, both at the best
@@ -2986,6 +2957,7 @@ def _night_diagnostics(problem, settings, result, positions, data, t_ref):
     return outlier, night_flags
 
 
+# deliberate: a named step of a long caller, too large to fold in
 def _band_target(result, data, n=None):
     """The engine's posterior of one band, rebuilt from a saved result:
     ``(problem, bounds, x, settings)``.
@@ -3048,6 +3020,7 @@ def _band_target(result, data, n=None):
 # ---------------------------------------------------------------------------
 
 
+# deliberate: a named step of fit_orbit_aliases, which is already long
 def _flatten_init(init, t_ref):
     """``init`` as ``(period, dt_peri, ecc, inc, omega, Omega, a_mas, flux)``
     (``dt_peri`` relative to ``t_ref``), or None."""
@@ -3120,9 +3093,9 @@ def fit_orbit_aliases(
     """Weigh the period aliases of an undersampled orbit with the observables.
 
     Each alias band (an integer number of orbits between the epochs) is fitted
-    to all epochs and given an evidence. The defaults need no per-system
-    arguments: [how it decides](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
-    [settings](../orbit_methods.md#alias-settings).
+    to all epochs and given an evidence; the defaults need no per-system
+    arguments ([how it decides](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
+    [settings](../orbit_methods.md#alias-settings)).
 
     Parameters
     ----------
@@ -3131,47 +3104,37 @@ def fit_orbit_aliases(
     p_range : (float, float), optional
         Period range (days); default [`period_window`][virgil.aliases.period_window].
     positions : PositionData or EpochPositions, optional
-        Positions that seed the fits (else random orbits).
+        Seeds for the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
-        Epoch times and ``dt_peri`` reference (MJD; default each dataset's mean
-        time, and their mean), prior ranges (``a_range`` in mas), eccentricity cap.
+        Epoch times and ``dt_peri`` reference (MJD; default the mean times),
+        prior ranges (``a_range`` in mas), eccentricity cap.
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, flag_nats, ess_min, seed, checkpoint_dir, on_band, init : optional
-        Search effort, sampling, seed; finished bands in ``checkpoint_dir`` are
+        Search effort and sampling; bands finished in ``checkpoint_dir`` are
         reloaded; a per-band callback; a warm start.
-    primary_diam, diam_range, vis_amp : optional
-        Primary diameter (mas): ``"auto"`` fits it if resolved, a float fixes it,
-        ``"fit"`` samples it (prior ``diam_range``); a profiled V^2 amplitude.
-    sign_free, flip_flux, skip_flagged : bool, optional
-        Sign-free seeds; a label-swapped refit at the flux ceiling; flagged
-        nights seed nothing.
+    primary_diam, diam_range, vis_amp, sign_free, flip_flux, skip_flagged : optional
+        Primary diameter (mas, ``"auto"``, a float or ``"fit"``); profiled V^2
+        amplitude; sign-free seeds; label-swapped refit at the flux ceiling;
+        flagged nights seed nothing.
     n_bands_max, temper, k, eccs, outlier_eps, batch_size, memory_budget : optional
-        Band cap of a default window; ``temper`` tempers the evidence for
-        correlated channels ([`virgil.tempering`][virgil.tempering]): True
-        estimates the factor (needs ``EpochPositions``), a float >= 1 fixes it,
-        False is off; period-grid density; seed eccentricities; outlier weight
-        in [0, 1); batching. ``outlier_eps`` defaults to 0 (no mixture),
-        unlike ``OrbitPipeline``'s 0.02, so direct calls keep their results.
+        Band cap, evidence tempering (True estimates, a float >= 1 fixes, False
+        off; needs ``EpochPositions``), grid density, seed eccentricities,
+        outlier weight in [0, 1) (``outlier_eps`` default 0: no mixture, unlike
+        ``OrbitPipeline``'s 0.02), batching.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
-        Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]).
-        Needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
-        decided; otherwise every band is seeded from the positions as without it.
+        Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]);
+        needs ``EpochPositions`` and ``skip_flagged``, else all bands are seeded.
 
     Returns
     -------
     AliasResult
-        ``bands`` (``log_z``, ``p``, period, orbit) and ``samples`` per band.
 
     Raises
     ------
     RuntimeError
         If every band fails (chained to the last error).
     ValueError
-        If no band lies in ``p_range``, or ``checkpoint_dir`` data cannot be
-        hashed. Preflight likelihood errors propagate unchanged.
-
-    Examples
-    --------
-    >>> result = fit_orbit_aliases(data, positions=positions)  # doctest: +SKIP
+        If no band lies in ``p_range``, or ``checkpoint_dir`` data cannot be hashed.
+        Preflight likelihood errors propagate unchanged.
     """
     data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (

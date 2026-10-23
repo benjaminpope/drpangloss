@@ -40,29 +40,23 @@ class AngleVector(dist.Distribution):
     Put it in a ``priors`` dict, keyed by the angle's path, for
     [`fit`][virgil.fitting.fit],
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] or
-    [`numpyro_model`][virgil.likelihood.numpyro_model]. They sample the vector v
-    at the site ``"<path>_vec"`` and give the model θ = atan2(v₂, v₁) in degrees,
-    in [0°, 360°). A ``fit`` starts from the unit vector of the angle's starting
-    value, or from ``init["<path>_vec"]``. The prior on θ is uniform (the
-    invariant prior for an angle) unless ``mean`` and ``kappa`` give a von Mises
-    prior, which is strong information from an external measurement; the radius
-    has a ring prior of width ``ring_width``. See
-    [angle priors without a wrap](../conventions.md#angle-vectors) for the
-    density and least-squares residuals.
+    [`numpyro_model`][virgil.likelihood.numpyro_model]. The vector is
+    sampled at ``"<path>_vec"``, giving θ = atan2(v₂, v₁) in [0°, 360°); a
+    ``fit`` starts from the starting angle or ``init["<path>_vec"]``. The
+    prior on θ is uniform unless ``mean`` and ``kappa`` give a von Mises
+    prior; see [angle priors](../conventions.md#angle-vectors).
 
     Parameters
     ----------
-    mean : float, optional
-        Mean angle μ (degrees) of a von Mises prior; with ``axial=True``,
-        ``mean + 180`` is equivalent.
-    kappa : float, optional
-        Concentration κ of the von Mises prior (of 2θ when ``axial``), whose
-        width is about ``57.3 / sqrt(kappa)`` degrees (half that if
-        ``axial``). Give both ``mean`` and ``kappa``, or neither.
+    mean, kappa : float, optional
+        Mean angle (degrees) and concentration of a von Mises prior (of 2θ
+        when ``axial``), of width about ``57.3 / sqrt(kappa)`` degrees (half
+        if ``axial``). Give both, or neither. It is strong information from
+        an external measurement; with ``axial``, ``mean + 180`` is equivalent.
     axial : bool, optional
         Whether the von Mises prior is on 2θ (an axis known modulo 180°).
     ring_width : float, optional
-        The ring's radial width s (default 0.25). It does not change the
+        The ring's radial width (default 0.25); it does not change the
         prior on θ.
     """
 
@@ -151,7 +145,9 @@ class AngleVector(dist.Distribution):
         chord2 = np.sum((unit - mean) ** 2, axis=-1)
         return log_p - 0.5 * self.kappa * chord2 - np.log(i0e(self.kappa))
 
-    def _sample_radius(self, key, shape):
+    def _sample_radius(
+        self, key, shape
+    ):  # deliberate: named rejection sampler, 30 lines
         """Draws of r ∝ r exp(-(r - 1)²/2s²), by rejection from a Normal
         at its mode r* = (1 + √(1 + 4s²))/2 (the ratio is log-concave)."""
         s = self.ring_width

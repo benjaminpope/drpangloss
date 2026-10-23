@@ -77,29 +77,25 @@ class SharedFlux:
     Parameters
     ----------
     grid : tuple, array-like or dict, optional
-        Coarse flux grid at the reference wavelength: ``(lo, hi, n)`` (last element
-        an integer) for ``n`` points uniform in ln f, or the flux values (a list,
-        array or tuple with a non-``int`` last element; one value fixes the flux),
-        or ``{band: either}``. Default ``(1e-3, 1.0, 16)``. The prior is
-        log-uniform between the first and last points; the grid only finds the
-        peak, and the marginal is integrated adaptively about it.
+        Flux grid at the reference wavelength: ``(lo, hi, n)`` (last element
+        an integer) for ``n`` points uniform in ln f, or the flux values (a
+        tuple whose last element is not an ``int``; one value fixes the flux),
+        or ``{band: either}``. Default
+        ``(1e-3, 1.0, 16)``; the prior is log-uniform over the grid's range.
     bands : dict, optional
-        ``{epoch or dataset name: band}`` (a dataset's entry overrides its epoch's);
-        datasets of a band share its flux. Default one band, ``"all"``.
+        ``{epoch or dataset name: band}``; datasets of a band share its flux.
+        Default one band, ``"all"``.
     reference : optional
-        The band whose flux is at most 1 (default the first). Bounding one band
-        fixes which star is the companion (r with flux f equals -r with 1/f in V^2
-        and closure phases) in every band; the others may have grids above 1.
+        The band whose flux is at most 1 (default the first); it fixes which
+        star is the companion in every band.
     slope : tuple, array-like or dict, optional
-        The chromatic slope beta, ``(lo, hi, n)`` (uniform prior), values, or a dict
-        per band; None fixes beta = 0.
+        The chromatic slope beta, ``(lo, hi, n)`` (uniform prior), values, or
+        a dict per band; None fixes beta = 0.
     wavel0 : float or dict, optional
-        Reference wavelength (m), one or per band; default the geometric mean of
-        each band's wavelengths.
+        Reference wavelength (m); default the geometric mean per band.
     order, newton : int, optional
-        Gauss-Legendre nodes per side of the adaptive marginal (default 16; each
-        side runs to 12 nats below the peak, or the prior bound) and Newton steps from the best grid
-        point to the profiled peak (default 8).
+        Gauss-Legendre nodes per side of the marginal (16) and Newton steps
+        to the profiled peak (8).
     """
 
     grid: object = (1e-3, 1.0, 16)
@@ -125,31 +121,23 @@ class OrbitScores:
     Attributes
     ----------
     score, profiled : numpy.ndarray
-        ``(n,)``: the log likelihood with every shared flux (and slope) integrated
-        out (error scales marginalized, gains profiled, extra terms added; ``-inf``
-        where not finite), and the same at each band's profiled flux instead.
-    flux, flux_err, flux_at_edge : numpy.ndarray
-        ``(n, n_band)``: the profiled flux of each band, its uncertainty from the
-        curvature in ln f (NaN with one grid point or non-negative curvature), and
-        whether it is at a prior bound.
-    slope, slope_err, slope_at_edge : numpy.ndarray
-        The same for the chromatic slope (0 and NaN without a slope grid; with both
-        free the uncertainties are marginal).
+        ``(n,)``: the log likelihood with the shared flux (and slope)
+        integrated out (``-inf`` where not finite), and at the profiled flux.
+    flux, flux_err, flux_at_edge, slope, slope_err, slope_at_edge : numpy.ndarray
+        ``(n, n_band)``: each band's profiled flux and chromatic slope (0
+        without a slope grid), their uncertainties (NaN without positive
+        curvature) and whether they sit at a prior bound.
     fallback : numpy.ndarray
         ``(n, n_band)`` bool: the curvature at the peak was unusable, so the
         marginal is the coarse grid's trapezoidal rule.
     terms : numpy.ndarray
-        ``(n, n_terms)``: each extra term's log likelihood (included in ``score``).
+        ``(n, n_terms)``: each extra term's log likelihood (in ``score``).
     scale, scale_at_bound : numpy.ndarray
-        ``(n, n_dataset)``: each dataset's largest block error scale on the quoted
-        errors at the profiled flux, and whether it presses against ``s_max`` (the
-        score is then penalized: the candidate needs errors inflated past the bound;
-        always False with ``s_max=None``).
-    bands, reference : tuple, object
-        The band names in column order, and the band whose flux is at most 1.
-    cost : int
-        Work units spent: candidates times the score evaluations of each dataset's
-        band marginal.
+        ``(n, n_dataset)``: each dataset's largest error scale at the
+        profiled flux, and whether it presses against ``s_max`` (the score is
+        then penalized).
+    bands, reference, cost : tuple, object, int
+        The band names, the reference band, and the work units spent.
     """
 
     score: onp.ndarray
@@ -286,7 +274,7 @@ class _Band:
         return int(self.log_flux.size)
 
 
-def _bands(epochs, shared):
+def _bands(epochs, shared):  # deliberate: named step of score_orbits, 70 lines
     """The bands, in order of first appearance among the datasets."""
     if not isinstance(shared, SharedFlux):
         raise TypeError(
@@ -404,7 +392,7 @@ def _local_rank(rows, cols, n):
     )
 
 
-def _gain_rank(gains):
+def _gain_rank(gains):  # deliberate: named step of _Scorer.__init__
     """How many independent gains (host): the degrees of freedom lost."""
     rows, shapes = onp.asarray(gains.rows), onp.asarray(gains.shapes)
     rank = _local_rank(rows, shapes, gains.n_vis)
@@ -552,15 +540,6 @@ def _newton(f, x, lo, hi, delta, steps):
     return x, fx, d1(x), d2(x)
 
 
-def _scale(g, h, x, lo, hi):
-    """The integrand's length scale at a peak ``x`` (``h`` the curvature,
-    and at a bound also the slope ``g``), and whether it is usable."""
-    at_bound = (x <= lo) | (x >= hi)
-    rate = np.sqrt(np.maximum(-h, 0.0)) + np.where(at_bound, np.abs(g), 0.0)
-    ok = np.isfinite(rate) & (rate > 0)
-    return 1.0 / np.where(ok, rate, 1.0), ok
-
-
 def _nodes(f, x, fx, scale, lo, hi, order):
     """Gauss–Legendre nodes and log weights over each side of the peak
     ``x``, each side's range grown until ``f`` falls by ``_DEPTH``, in the
@@ -594,7 +573,12 @@ def _marginal_1d(f, x0, lo, hi, delta, shared):
     """Profile and integrate ``f`` over one nuisance with a uniform prior on
     ``[lo, hi]``: ``(log marginal, x̂, f(x̂), σ, ok)``."""
     x, fx, g, h = _newton(f, x0, lo, hi, delta, shared.newton)
-    scale, ok = _scale(g, h, x, lo, hi)
+    # The integrand's length scale at the peak, and whether it is usable
+    # (at a bound the slope also sets it).
+    at_bound = (x <= lo) | (x >= hi)
+    rate = np.sqrt(np.maximum(-h, 0.0)) + np.where(at_bound, np.abs(g), 0.0)
+    ok = np.isfinite(rate) & (rate > 0)
+    scale = 1.0 / np.where(ok, rate, 1.0)
     nodes, log_w = _nodes(f, x, fx, scale, lo, hi, shared.order)
     values = jax.vmap(f)(nodes)
     values = np.where(np.isnan(values), -np.inf, values)
@@ -603,7 +587,9 @@ def _marginal_1d(f, x0, lo, hi, delta, shared):
     return log_z, x, fx, sigma, ok & np.isfinite(log_z)
 
 
-def _band_marginal(band, shared, score, grid_scores):
+def _band_marginal(
+    band, shared, score, grid_scores
+):  # deliberate: 141 lines, called from the jitted kernel
     """One band's marginal over its flux (and slope), its profile and the
     profiled values: ``(marginal, profiled, (f, σ_f, f_edge, β, σ_β,
     β_edge, fallback))``.
@@ -746,35 +732,7 @@ def _band_marginal(band, shared, score, grid_scores):
     )
 
 
-def _evaluations(band, shared):
-    """Score evaluations per dataset of ``band`` (work units), counting a
-    first or second derivative as one evaluation."""
-    n_f, n_b = band.shape
-    newton = 1 + shared.newton * (3 + _HALVINGS) + 2
-    sides = 2 * (_DOUBLINGS + shared.order)
-    one_d = newton + sides
-    if n_f > 1 and n_b > 1:
-        start = 2 * _ALTERNATIONS * newton
-        return band.size + start + newton + sides + 2 * shared.order * one_d
-    if n_f > 1 or n_b > 1:
-        return band.size + one_d
-    return 1
-
-
-def _term_function(term):
-    """``f(orbit) -> log likelihood`` for an extra term."""
-    if isinstance(term, _Term):
-        return lambda orbit: term.loglike({"orbit": orbit})
-    if callable(term):
-        return term
-    raise TypeError(
-        "Each term must be a likelihood term (RVData.term, "
-        "PositionData.term) or a callable orbit -> log likelihood, not "
-        f"{type(term).__name__}."
-    )
-
-
-def _candidates(orbits):
+def _candidates(orbits):  # deliberate: named step of score_orbits
     """The candidates stacked along a leading axis, and their number."""
     if isinstance(orbits, (list, tuple)):
         stacked = _stack(_orbit_list(orbits))
@@ -811,7 +769,9 @@ def _wavel(data):
     )
 
 
-def _fixed_parts(epochs, model, stacked, n, dtype):
+def _fixed_parts(
+    epochs, model, stacked, n, dtype
+):  # deliberate: named step of score_orbits, 62 lines
     """Per dataset: the companion-free numerator A = V(0) T(0) and the
     total fluxes T(0), T(1), checked to be the same for the first and
     last candidate, and the scene checked to be linear in the flux."""
@@ -875,7 +835,9 @@ def _fixed_parts(epochs, model, stacked, n, dtype):
     return parts
 
 
-def _peak_scales(scorers, chi2_peak, dofs, s_max):
+def _peak_scales(
+    scorers, chi2_peak, dofs, s_max
+):  # deliberate: named step of score_orbits
     """Each dataset's largest block scale ŝ = √(χ²/ν) at the profiled
     flux, ``(n, n_dataset)``, and whether its posterior presses against
     ``s_max``: ŝ is within one posterior width in ln s, 1/√(2 dof ν), of
@@ -893,7 +855,7 @@ def _peak_scales(scorers, chi2_peak, dofs, s_max):
     return onp.stack(scale, axis=1), onp.stack(at_bound, axis=1)
 
 
-def _score_static(
+def _score_static(  # deliberate: builds the jit's static key, 35 lines
     model, epochs, bands, scorers, term_fns, terms, shared, scales,
     batch_size, s_max,
 ):  # fmt: skip
@@ -1009,33 +971,28 @@ def score_orbits(
 ):
     """Score candidate orbits on all epochs, with the flux shared.
 
-    Each companion is placed at every sample's own time and the scene (linear in
-    the flux) evaluated once for a unit companion. The score is the
-    scale-marginalized log likelihood with the flux integrated out and the
-    extra terms added ([details][virgil.orbit_search]).
+    The score is the scale-marginalized log likelihood with the flux
+    integrated out and the extra terms added ([details][virgil.orbit_search]).
 
     Parameters
     ----------
     model : callable
         ``model(orbit, flux)`` returns the scene, e.g.
-        [`OrbitalBinary`][virgil.models.OrbitalBinary]. It must be linear in
+        [`OrbitalBinary`][virgil.models.OrbitalBinary]; it must be linear in
         ``flux`` and independent of the orbit at flux 0 (both are checked).
     epochs : Epochs
         The data; datasets without sample times use ``Epochs.times``.
     orbits : sequence or orbit
-        A list of orbits (or ``starting_orbits`` pairs), or one orbit with a
-        leading candidate axis; one class and ``t_ref``.
+        Orbits (or ``starting_orbits`` pairs), or one orbit with a leading
+        candidate axis; one class and ``t_ref``.
     shared : SharedFlux, optional
         Flux grids, bands and slopes (default one band, f in [1e-3, 1]).
     terms : sequence, optional
-        Extra log likelihood terms: [`RVData.term`][virgil.orbits.RVData.term],
-        [`PositionData.term`][virgil.orbits.PositionData.term], or callables
-        ``orbit -> log likelihood``.
+        Extra log likelihood terms (``RVData.term``, ``PositionData.term``)
+        or callables ``orbit -> log likelihood``.
     scales, dof, s_max : optional
-        As for ``rank_orbits``: ``scales="quoted"`` scores ``-χ²/2``; ``dof`` is
-        a number or a dict keyed by dataset or epoch name. ``s_max`` defaults to
-        5 (``rank_orbits``: None, no bound), and a candidate needing more is
-        penalized and flagged in ``OrbitScores.scale_at_bound``.
+        As for ``rank_orbits``; ``s_max`` defaults to 5, and a candidate
+        needing more is penalized (``OrbitScores.scale_at_bound``).
     batch_size, max_evaluations, dtype : optional
         Candidates per step (never changes the result); a budget in score
         evaluations (over it raises ``ValueError``); precision.
@@ -1043,11 +1000,6 @@ def score_orbits(
     Returns
     -------
     OrbitScores
-        In the order of ``orbits``; rank with ``.order()``.
-
-    Examples
-    --------
-    >>> scores = score_orbits(OrbitalBinary, epochs, candidates)  # doctest: +SKIP
     """
     if not isinstance(epochs, Epochs):
         raise TypeError(
@@ -1058,9 +1010,23 @@ def score_orbits(
     shared = SharedFlux() if shared is None else shared
     bands, reference = _bands(epochs, shared)
     stacked, n = _candidates(orbits)
-    cost = n * sum(
-        _evaluations(band, shared) * len(band.datasets) for band in bands
-    )
+    # Work units per dataset of a band: score evaluations, counting a first
+    # or second derivative as one.
+    newton = 1 + shared.newton * (3 + _HALVINGS) + 2
+    sides = 2 * (_DOUBLINGS + shared.order)
+    one_d = newton + sides
+    cost = 0
+    for band in bands:
+        n_f, n_b = band.shape
+        if n_f > 1 and n_b > 1:
+            start = 2 * _ALTERNATIONS * newton
+            per = band.size + start + newton + sides + 2 * shared.order * one_d
+        elif n_f > 1 or n_b > 1:
+            per = band.size + one_d
+        else:
+            per = 1
+        cost += per * len(band.datasets)
+    cost *= n
     if max_evaluations is not None and cost > int(max_evaluations):
         raise ValueError(
             f"Scoring {n} candidates would cost {cost} work units "
@@ -1069,7 +1035,18 @@ def score_orbits(
             f"over the budget max_evaluations={int(max_evaluations)}. "
             "Score fewer candidates, or use coarser flux grids."
         )
-    term_fns = tuple(_term_function(t) for t in terms)
+    term_fns = []
+    for term in terms:
+        if isinstance(term, _Term):
+            term = lambda orbit, term=term: term.loglike({"orbit": orbit})  # noqa: E731
+        elif not callable(term):
+            raise TypeError(
+                "Each term must be a likelihood term (RVData.term, "
+                "PositionData.term) or a callable orbit -> log likelihood, "
+                f"not {type(term).__name__}."
+            )
+        term_fns.append(term)
+    term_fns = tuple(term_fns)
     scorers = tuple(_Scorer(d, s_max) for d in epochs.data)
     # One candidate holds its whole flux grid at once, and a gain Jacobian
     # of n_vis columns per gain mode on each grid point.
