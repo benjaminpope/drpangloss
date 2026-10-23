@@ -10,7 +10,17 @@ anything before 1.0 may change between minor versions.
 ### Changed
 
 - `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged.
+- The release checklist no longer requires a mutation-testing kill rate.
 - The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
+
+### Fixed
+
+- `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
+  added to it changes no image, and LM's QR solve drifted along that direction
+  by rounding noise (to 4e5 or 3.6e10, depending on platform). The fitted
+  `log_brightness` is now `log` of the pixel fluxes (`Σ exp = 1`), the same
+  on every platform; images, χ² and penalties are unchanged to rounding.
+  Pixels whose optimum is zero flux still fit towards `-inf`.
 
 ## 0.4.1 (2026-10-23)
 

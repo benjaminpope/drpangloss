@@ -719,7 +719,7 @@ def fit(
             _Objective(model, priors, data, regularizers, noise, likelihoods),
             dtype,
         )
-        z0 = problem.init(cast_tree(init, dtype))
+        z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
         method = method or (
             "lm"
             if _has_residuals(problem, z0)
@@ -785,6 +785,7 @@ def fit(
             raise ValueError(
                 f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
             )
+        z = _recentre(problem, z)
         model = problem.build(z)
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
@@ -1301,7 +1302,7 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
         self.limit = limit
 
     def terminate(self, fn, y, args, options, state, tags):
-        problem, scale = args
+        problem, scale, _ = args
         gradient = jax.grad(_scaled_loss(problem, scale))(y)
         converged = _largest(gradient) <= self.tolerance
         spent = state.num_steps >= self.limit
@@ -1314,8 +1315,9 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
 
 
 def _lm_residuals(z, args):
-    problem, scale = args
-    return problem.residuals(z) / np.sqrt(scale)
+    problem, scale, masks = args
+    rows = problem.residuals(z) / np.sqrt(scale)
+    return np.concatenate([rows, _gauge_residuals(masks, z)])
 
 
 @eqx.filter_jit
@@ -1359,6 +1361,7 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
     linear_solver = _lm_linear_solver(z0, cg_steps)
     chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
+    masks = _gauge_masks(problem)
     z, steps = z0, 0
     while True:
         limit = np.asarray(min(chunk, max_steps - steps))
@@ -1366,11 +1369,11 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
             _lm_residuals,
             _GradientStoppedLM(tolerance, limit, linear_solver),
             z,
-            args=(problem, scale),
+            args=(problem, scale, masks),
             max_steps=None,
             throw=False,
         )
-        z = solution.value
+        z = _recentre(problem, solution.value)
         steps += int(solution.stats["num_steps"])
         limited = solution.result == optx.RESULTS.nonlinear_max_steps_reached
         done = (
@@ -1672,6 +1675,41 @@ def _gauge_masks(problem):
                 else np.asarray(support != 0)
             )
     return masks
+
+
+def _log_flux(mask, x):
+    """The log of the total flux ``Σ exp(x)`` over the supported pixels."""
+    used = mask & np.isfinite(x)
+    return jax.nn.logsumexp(np.where(used, x, -np.inf))
+
+
+def _recentre(problem, z):
+    """``z`` with each flat image's log-brightness gauge-fixed to the log of its
+    pixel fluxes (``Σ exp(x) = 1``), so the lit pixels sit near 0.
+
+    The loss does not depend on a constant added to the log-brightness of a
+    softmax image (see ``Image``), which the optimizers leave to rounding
+    noise (platform-dependent shifts of 1e5 or more). This changes no loss
+    or image. Dark pixels, whose optimum is ``-inf``, are left to run.
+    """
+    out = dict(z)
+    for key, mask in _gauge_masks(problem).items():
+        out[key] = np.where(mask, z[key] - _log_flux(mask, z[key]), z[key])
+    return out
+
+
+def _gauge_residuals(masks, z):
+    """One residual per gauge block, the log total flux ``Σ exp(x)``.
+
+    It turns the constant null direction of the data's Jacobian (a QR solve
+    steps along it by rounding noise) into a well-conditioned one that is held
+    at 0, where ``_recentre`` puts it. The loss and the stopping test do not
+    see it.
+    """
+    return np.concatenate(
+        [np.zeros(0)]
+        + [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
+    )
 
 
 def _metric(problem, z, scale, round=0):
