@@ -37,6 +37,9 @@ def _merge(n, links):
     return onp.array([find(i) for i in range(n)])
 
 
+# deliberate: test seam: unit-tested directly
+
+
 def _groups(i1, i2, i3):
     """Triangles connected through shared baseline samples, as index lists."""
     n = len(i1)
@@ -55,6 +58,9 @@ def _groups(i1, i2, i3):
     order = onp.argsort(roots, kind="stable")
     _, starts = onp.unique(roots[order], return_index=True)
     return onp.split(order, starts[1:])
+
+
+# deliberate: test seam: unit-tested directly
 
 
 def _incidence(group, i1, i2, i3):

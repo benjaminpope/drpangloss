@@ -174,25 +174,6 @@ def chi2ppf(p, df):
     return np.where(a > 0.0, 2.0 * x, np.nan)
 
 
-def _gammaincinv_guess(a, p):
-    """Starting point for `_gammaincinv` (Numerical Recipes 3rd ed. 6.2.1)."""
-    tiny = np.finfo(p.dtype).tiny
-    pp = np.where(p < 0.5, p, 1.0 - p)
-    t = np.sqrt(-2.0 * np.log(pp))
-    z = (2.30753 + t * 0.27061) / (1.0 + t * (0.99229 + t * 0.04481)) - t
-    z = np.where(p < 0.5, -z, z)
-    a_big = np.maximum(a, 1.0)
-    wh = a_big * (1.0 - 1.0 / (9.0 * a_big) - z / (3.0 * np.sqrt(a_big))) ** 3
-    wh = np.maximum(1e-3, wh)
-
-    a_small = np.clip(a, tiny, 1.0)
-    t = 1.0 - a_small * (0.253 + a_small * 0.12)
-    lower = np.exp(np.log(np.maximum(p, tiny) / t) / a_small)
-    upper = 1.0 - np.log1p(-np.minimum((p - t) / (1.0 - t), 1.0 - 1e-16))
-    small = np.where(p < t, lower, upper)
-    return np.where(a > 1.0, wh, small)
-
-
 @jax.custom_jvp
 def _gammaincinv(a, p):
     """``x`` with ``gammainc(a, x) = p``, by Halley's method (implicit JVP)."""
@@ -216,9 +197,27 @@ def _gammaincinv(a, p):
         converged = (density == 0.0) | ~np.isfinite(u)
         return np.where(converged, x, new)
 
-    return jax.lax.fori_loop(0, 20, step, _gammaincinv_guess(a, p))
+    # starting point: Numerical Recipes 3rd ed. 6.2.1
+    tiny = np.finfo(p.dtype).tiny
+    pp = np.where(p < 0.5, p, 1.0 - p)
+    t = np.sqrt(-2.0 * np.log(pp))
+    z = (2.30753 + t * 0.27061) / (1.0 + t * (0.99229 + t * 0.04481)) - t
+    z = np.where(p < 0.5, -z, z)
+    a_big = np.maximum(a, 1.0)
+    wh = a_big * (1.0 - 1.0 / (9.0 * a_big) - z / (3.0 * np.sqrt(a_big))) ** 3
+    wh = np.maximum(1e-3, wh)
+
+    a_small = np.clip(a, tiny, 1.0)
+    t = 1.0 - a_small * (0.253 + a_small * 0.12)
+    lower = np.exp(np.log(np.maximum(p, tiny) / t) / a_small)
+    upper = 1.0 - np.log1p(-np.minimum((p - t) / (1.0 - t), 1.0 - 1e-16))
+    small = np.where(p < t, lower, upper)
+    guess = np.where(a > 1.0, wh, small)
+
+    return jax.lax.fori_loop(0, 20, step, guess)
 
 
+# deliberate: custom_jvp rule, an implicit-function derivative
 @_gammaincinv.defjvp
 def _gammaincinv_jvp(primals, tangents):
     a, p = primals
@@ -439,6 +438,7 @@ def injection_limits(
 _STEP_DECADES = 0.25
 _BISECTIONS = 22
 _MAX_BRACKET_DECADES = 40
+# deliberate: test seam: used by test_grid_and_limits
 
 
 def _significance_ceiling():
@@ -571,6 +571,7 @@ def _solve_limits(
     return limits.reshape(shape), crossed.reshape(shape)
 
 
+# deliberate: jit boundary
 @eqx.filter_jit
 def _absil_limits(
     grid,
@@ -612,6 +613,7 @@ def _absil_limits(
     )
 
 
+# deliberate: jit boundary
 @eqx.filter_jit
 def _injection_limits(
     grid,

@@ -376,9 +376,28 @@ class FluxSpectrum(_Block):
         continuum = _ranges(continuum)
         cont_rows = cont_basis = cont_fit = None
         if kind == "nflux":
-            cont_rows, cont_basis, cont_fit = _row_continuum(
-                wavel, row, continuum, continuum_order
-            )
+            # per row: padded sample indices, continuum basis and fit matrices
+            c_rows = _padded_groups(row, wavel.size)
+            c_n, c_m = c_rows.shape
+            c_basis = onp.zeros((c_n, c_m, continuum_order + 1))
+            c_fit = onp.zeros((c_n, continuum_order + 1, c_m))
+            for r in range(c_n):
+                idx = c_rows[r][c_rows[r] < wavel.size]
+                mask = (
+                    onp.ones(idx.size, bool)
+                    if continuum is None
+                    else in_ranges(wavel[idx], continuum)
+                )
+                b = _continuum_basis(wavel[idx], continuum_order)
+                if onp.linalg.matrix_rank(b[mask]) < continuum_order + 1:
+                    raise ValueError(
+                        f"A spectrum has {int(mask.sum())} continuum channels, too "
+                        f"few for a continuum of order {continuum_order}; widen the continuum "
+                        "ranges."
+                    )
+                c_basis[r, : idx.size] = b
+                c_fit[r][:, onp.flatnonzero(mask)] = onp.linalg.pinv(b[mask])
+            cont_rows, cont_basis, cont_fit = c_rows, c_basis, c_fit
         return cls(
             values=np.asarray(values),
             errors=np.asarray(errors),
@@ -441,8 +460,16 @@ class FluxSpectrum(_Block):
             return eqx.tree_at(lambda b: b.sample, out, sample)
         return self.rebuild(keep=flux_keep)
 
-    def _template(self, model, cvis):
-        """The model's spectral template t (see the class notes)."""
+    @renamed()
+    def predict(self, model, cvis):
+        if self.mu is None:
+            raise ValueError(
+                f"State the prior on the {self.kind!r} grey scale, in the "
+                "data's units: data.with_flux_scale(scale=(mean, sd)). It is "
+                "not taken from the data (see virgil.observables)."
+            )
+        mu = np.asarray(self.mu)[self.group]
+        # the model's spectral template t (see the class notes)
         base = model.total_spectrum(np.asarray(self.wavel))
         base = np.broadcast_to(base, self.wavel.shape)
         if self.kind == "corrflux":
@@ -455,25 +482,11 @@ class FluxSpectrum(_Block):
             level = (
                 np.ones_like(base).at[self.cont_rows].set(level, mode="drop")
             )
-            return base / level
+            return mu * (base / level)
         n_group = self.members.shape[0]
         total = jax.ops.segment_sum(base, self.group, n_group)
         count = np.asarray(self.count, base.dtype)
-        return base / (total / count)[self.group]
-
-    def _require_prior(self):
-        if self.mu is None:
-            raise ValueError(
-                f"State the prior on the {self.kind!r} grey scale, in the "
-                "data's units: data.with_flux_scale(scale=(mean, sd)). It is "
-                "not taken from the data (see virgil.observables)."
-            )
-
-    @renamed()
-    def predict(self, model, cvis):
-        self._require_prior()
-        mu = np.asarray(self.mu)[self.group]
-        return mu * self._template(model, cvis)
+        return mu * (base / (total / count)[self.group])
 
     def _columns(self, prediction, errors):
         """The whitened marginalized modes, ``(n, p)``: τ_j μ t xʲ / σ."""
@@ -533,31 +546,6 @@ class FluxSpectrum(_Block):
         if isinstance(values, jax.core.Tracer):
             return eqx.tree_at(lambda b: b.values, self, values)
         return self.rebuild(values=values)
-
-
-def _row_continuum(wavel, row, continuum, order):
-    """Per row: padded sample indices, continuum basis and fit matrices."""
-    rows = _padded_groups(row, wavel.size)
-    n_row, m = rows.shape
-    basis = onp.zeros((n_row, m, order + 1))
-    fit = onp.zeros((n_row, order + 1, m))
-    for r in range(n_row):
-        idx = rows[r][rows[r] < wavel.size]
-        mask = (
-            onp.ones(idx.size, bool)
-            if continuum is None
-            else in_ranges(wavel[idx], continuum)
-        )
-        b = _continuum_basis(wavel[idx], order)
-        if onp.linalg.matrix_rank(b[mask]) < order + 1:
-            raise ValueError(
-                f"A spectrum has {int(mask.sum())} continuum channels, too "
-                f"few for a continuum of order {order}; widen the continuum "
-                "ranges."
-            )
-        basis[r, : idx.size] = b
-        fit[r][:, onp.flatnonzero(mask)] = onp.linalg.pinv(b[mask])
-    return rows, basis, fit
 
 
 class DifferentialPhase(_Block):
@@ -689,7 +677,19 @@ class DifferentialPhase(_Block):
             channels = onp.sort(channels)
             if channels.size == 0:
                 continue
-            cont, line = _windows(channels, continuum, lines)
+            # continuum and line masks of the frame's channels
+            if continuum is None and lines is None:
+                cont = line = onp.ones(channels.size, dtype=bool)
+            elif lines is None:
+                cont = in_ranges(channels, continuum)
+                line = ~cont
+            else:
+                line = in_ranges(channels, lines)
+                cont = (
+                    ~line
+                    if continuum is None
+                    else in_ranges(channels, continuum)
+                )
             if not line.any():
                 continue
             if prior_width is None:
@@ -714,8 +714,20 @@ class DifferentialPhase(_Block):
                 pos = onp.searchsorted(wavel[idx], channels)
                 grid[b] = idx[pos]
                 pairs[b] = stations[idx[0]]
-            q_op = _baseline_basis(pairs) if closure_free else None
-            if q_op is None:
+            if closure_free:
+                # Qᵀ: an orthonormal basis of the telescope-differenced
+                # phases (the column space of the baseline-telescope
+                # incidence matrix)
+                telescopes = onp.unique(pairs)
+                col = {tel: j for j, tel in enumerate(telescopes)}
+                inc = onp.zeros((len(pairs), telescopes.size))
+                for b, (i, j) in enumerate(pairs):
+                    inc[b, col[i]] += 1.0
+                    inc[b, col[j]] -= 1.0
+                u, s, _ = onp.linalg.svd(inc, full_matrices=False)
+                rank = int(onp.sum(s > 1e-9 * s.max()))
+                q_op = u[:, :rank].T
+            else:
                 q_op = onp.eye(rows.size)
             frames.append((grid, q_op, w_op, basis_f))
 
@@ -874,23 +886,24 @@ class DifferentialPhase(_Block):
                 # In NumPy float64 throughout, so a later float64 fit gets a
                 # factor as precise as one it would build itself.
                 try:
-                    chol = onp.linalg.cholesky(self._covariance64(errors))
+                    # covariance in NumPy float64, for the cached factor
+                    var = onp.where(self.chan, errors[self.grid] ** 2, 0.0)
+                    q, w = (
+                        onp.asarray(x, onp.float64) for x in (self.q, self.w)
+                    )
+                    a = onp.einsum("frc,fsc,fbc->fbrs", w, w, var)
+                    cov = onp.einsum("fkb,flb,fbrs->fkrls", q, q, a)
+                    n_f, k, r = self.valid.shape
+                    cov = cov.reshape(n_f, k * r, k * r)
+                    pad = 1.0 - onp.asarray(self.valid).reshape(n_f, k * r)
+                    chol = onp.linalg.cholesky(
+                        cov + pad[:, :, None] * onp.eye(k * r)
+                    )
                 except onp.linalg.LinAlgError:
                     chol = None  # leave it to whiten, as before
         return eqx.tree_at(
             lambda b: b.chol, self, chol, is_leaf=lambda x: x is None
         )
-
-    def _covariance64(self, errors):
-        """:meth:`covariance` in NumPy float64, for the cached factor."""
-        var = onp.where(self.chan, errors[self.grid] ** 2, 0.0)
-        q, w = (onp.asarray(x, onp.float64) for x in (self.q, self.w))
-        a = onp.einsum("frc,fsc,fbc->fbrs", w, w, var)
-        cov = onp.einsum("fkb,flb,fbrs->fkrls", q, q, a)
-        n_f, k, r = self.valid.shape
-        cov = cov.reshape(n_f, k * r, k * r)
-        pad = 1.0 - onp.asarray(self.valid).reshape(n_f, k * r)
-        return cov + pad[:, :, None] * onp.eye(k * r)
 
     def with_errors(self, errors):
         return super().with_errors(errors)._with_cholesky()
@@ -905,7 +918,49 @@ class DifferentialPhase(_Block):
         # ``errors`` (the propagated diagonal) is not used: the block is
         # whitened with its full covariance from the per-sample errors.
         if self.prior_width is not None:
-            return self._whiten_with_prior(prediction - data)
+            # offsets and slopes marginalized
+            n_f, k, r = self.valid.shape
+            y = (
+                np.zeros(n_f * k * r, (prediction - data).dtype)
+                .at[self.keep]
+                .set(prediction - data)
+            )
+            y = y.reshape(n_f, k, r).transpose(0, 2, 1)  # (F, R, K)
+            errors = np.asarray(self.errors)
+            var = np.where(self.chan, errors[self.grid] ** 2, 0.0)
+            q = np.asarray(self.q, var.dtype)
+            w = np.asarray(self.w, var.dtype)
+            var = np.einsum("frc,fbc->fbr", w**2, var)  # W selects channels
+            valid = np.asarray(self.valid).transpose(0, 2, 1)  # (F, R, K)
+            pad = 1.0 - valid.astype(var.dtype)
+            # Each channel's closure-free combinations: covariance Qᵀ D Q.
+            cov = np.einsum("fkb,flb,fbr->frkl", q, q, var)
+            cov = cov + pad[..., None] * np.eye(k, dtype=var.dtype)
+            chol = np.linalg.cholesky(cov)
+            x = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
+            # Offset and slope of each baseline: Qᵀ e_b times the basis, through
+            # the same whitening; degenerate (closure) directions are harmless.
+            q_cols = np.broadcast_to(q[:, None], (n_f, r, k, q.shape[2]))
+            q_cols = jsl.solve_triangular(chol, q_cols, lower=True)
+            widths = np.asarray(self.prior_width, var.dtype)
+            basis = np.asarray(self.basis, var.dtype) * widths
+            local = np.einsum("frkb,frj->frkbj", q_cols, basis)
+            local = np.where(valid[..., None, None], local, 0.0)
+            local = local.reshape(n_f, r * k, -1)
+            n = n_f * r * k
+            flat = np.arange(n).reshape(n_f, r * k)
+            rows = np.where(valid.reshape(n_f, r * k), flat, n)
+            white, extra = whiten_blocks(x.reshape(-1), rows, local)
+            effective = np.diagonal(chol, axis1=2, axis2=3).reshape(-1)
+            effective = effective * np.exp(extra)
+
+            def in_output_order(a):
+                return a.reshape(n_f, r, k).transpose(0, 2, 1).reshape(-1)
+
+            return (
+                in_output_order(white)[self.keep],
+                in_output_order(effective)[self.keep],
+            )
         n_f, k, r = self.valid.shape
         resid = np.zeros(n_f * k * r, prediction.dtype)
         resid = resid.at[self.keep].set(prediction - data)
@@ -920,47 +975,6 @@ class DifferentialPhase(_Block):
         return (
             white.reshape(-1)[self.keep],
             effective.reshape(-1)[self.keep],
-        )
-
-    def _whiten_with_prior(self, resid):
-        """Whitened residuals with offsets and slopes marginalized."""
-        n_f, k, r = self.valid.shape
-        y = np.zeros(n_f * k * r, resid.dtype).at[self.keep].set(resid)
-        y = y.reshape(n_f, k, r).transpose(0, 2, 1)  # (F, R, K)
-        errors = np.asarray(self.errors)
-        var = np.where(self.chan, errors[self.grid] ** 2, 0.0)
-        q = np.asarray(self.q, var.dtype)
-        w = np.asarray(self.w, var.dtype)
-        var = np.einsum("frc,fbc->fbr", w**2, var)  # W selects channels
-        valid = np.asarray(self.valid).transpose(0, 2, 1)  # (F, R, K)
-        pad = 1.0 - valid.astype(var.dtype)
-        # Each channel's closure-free combinations: covariance Qᵀ D Q.
-        cov = np.einsum("fkb,flb,fbr->frkl", q, q, var)
-        cov = cov + pad[..., None] * np.eye(k, dtype=var.dtype)
-        chol = np.linalg.cholesky(cov)
-        x = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
-        # Offset and slope of each baseline: Qᵀ e_b times the basis, through
-        # the same whitening; degenerate (closure) directions are harmless.
-        q_cols = np.broadcast_to(q[:, None], (n_f, r, k, q.shape[2]))
-        q_cols = jsl.solve_triangular(chol, q_cols, lower=True)
-        widths = np.asarray(self.prior_width, var.dtype)
-        basis = np.asarray(self.basis, var.dtype) * widths
-        local = np.einsum("frkb,frj->frkbj", q_cols, basis)
-        local = np.where(valid[..., None, None], local, 0.0)
-        local = local.reshape(n_f, r * k, -1)
-        n = n_f * r * k
-        flat = np.arange(n).reshape(n_f, r * k)
-        rows = np.where(valid.reshape(n_f, r * k), flat, n)
-        white, extra = whiten_blocks(x.reshape(-1), rows, local)
-        effective = np.diagonal(chol, axis1=2, axis2=3).reshape(-1)
-        effective = effective * np.exp(extra)
-
-        def in_output_order(a):
-            return a.reshape(n_f, r, k).transpose(0, 2, 1).reshape(-1)
-
-        return (
-            in_output_order(white)[self.keep],
-            in_output_order(effective)[self.keep],
         )
 
     def simulated(self, prediction, cvis, noise, key=None):
@@ -987,31 +1001,3 @@ class DifferentialPhase(_Block):
                     samples = self.grid[f, b, channel]
                     values = values.at[samples].add(modes[f, b])
         return eqx.tree_at(lambda b: b.values, self, values)
-
-
-def _windows(channels, continuum, lines):
-    """Continuum and line masks of a frame's channels (see ``build``)."""
-    if continuum is None and lines is None:
-        everything = onp.ones(channels.size, dtype=bool)
-        return everything, everything
-    if lines is None:
-        cont = in_ranges(channels, continuum)
-        return cont, ~cont
-    line = in_ranges(channels, lines)
-    if continuum is None:
-        return ~line, line
-    return in_ranges(channels, continuum), line
-
-
-def _baseline_basis(pairs):
-    """Qᵀ: an orthonormal basis of the telescope-differenced phases
-    (the column space of the baseline-telescope incidence matrix)."""
-    telescopes = onp.unique(pairs)
-    col = {t: j for j, t in enumerate(telescopes)}
-    a = onp.zeros((len(pairs), telescopes.size))
-    for b, (i, j) in enumerate(pairs):
-        a[b, col[i]] += 1.0
-        a[b, col[j]] -= 1.0
-    u, s, _ = onp.linalg.svd(a, full_matrices=False)
-    rank = int(onp.sum(s > 1e-9 * s.max()))
-    return u[:, :rank].T

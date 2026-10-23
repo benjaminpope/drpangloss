@@ -450,7 +450,21 @@ class Nodes(Spectrum):
         if self.kind == "linear" or self.values.size < 3:
             inside = np.interp(clipped, self.wavel, self.values)
         else:
-            inside = _natural_cubic(clipped, self.wavel, self.values)
+            # natural cubic spline through the nodes
+            nodes, values, x = self.wavel, self.values, clipped
+            m = _spline_moments(nodes, values)
+            i = np.clip(
+                np.searchsorted(nodes, x, side="right") - 1, 0, values.size - 2
+            )
+            t0, t1 = nodes[i], nodes[i + 1]
+            hi = t1 - t0
+            left, right = t1 - x, x - t0
+            inside = (
+                m[i] * left**3 / (6.0 * hi)
+                + m[i + 1] * right**3 / (6.0 * hi)
+                + (values[i] / hi - m[i] * hi / 6.0) * left
+                + (values[i + 1] / hi - m[i + 1] * hi / 6.0) * right
+            )
         if self.outside == "constant":
             return inside
         within = (wavel >= self.wavel[0]) & (wavel <= self.wavel[-1])
@@ -467,7 +481,32 @@ class Nodes(Spectrum):
         points = [self.wavel, np.ravel(self.wavel0)]
         if self.kind == "cubic" and self.values.size >= 3:
             # A natural spline can dip below zero between positive nodes.
-            points.append(_cubic_extrema(self.wavel, self.values))
+            # where each segment of the spline is stationary: both roots of the
+            # derivative (shape ``(2 (n - 1),)``), solved without branching so
+            # the result is traceable and finite; a root outside the segment or
+            # a complex one is clipped to an end or the vertex
+            nodes, values = self.wavel, self.values
+            h = np.diff(nodes)
+            m = _spline_moments(nodes, values)
+            m0, m1 = m[:-1], m[1:]
+            a = (m0 + m1) / (2.0 * h)
+            b = m0
+            c = (
+                (values[1:] - values[:-1]) / h
+                - h * (m1 - m0) / 6.0
+                - m0 * h / 2.0
+            )
+            tiny = 1e-12 * (np.abs(b) + h * np.abs(a) + 1e-30)
+            disc = np.sqrt(np.maximum(b**2 - 4.0 * a * c, 0.0))
+            q = -0.5 * (b + np.where(b >= 0.0, disc, -disc))
+            small_a = np.abs(a * h) <= tiny
+            safe_a = np.where(small_a, 1.0, a)
+            safe_q = np.where(np.abs(q) <= 1e-30, 1.0, q)
+            safe_b = np.where(np.abs(b) <= 1e-30, 1.0, b)
+            root1 = np.where(small_a, -c / safe_b, q / safe_a)
+            root2 = np.where(small_a, -c / safe_b, c / safe_q)
+            roots = np.clip(np.concatenate([root1, root2]), 0.0, np.tile(h, 2))
+            points.append(np.tile(nodes[:-1], 2) + roots)
         return np.concatenate(points)
 
     def __check_init__(self):
@@ -630,48 +669,6 @@ def _spline_moments(nodes, values):
         .at[1:-1]
         .set(np.linalg.solve(a, 6.0 * np.diff(slope)))
     )
-
-
-def _natural_cubic(x, nodes, values):
-    """Natural cubic spline through ``(nodes, values)`` at ``x`` (in range)."""
-    n = values.size
-    m = _spline_moments(nodes, values)
-    i = np.clip(np.searchsorted(nodes, x, side="right") - 1, 0, n - 2)
-    t0, t1 = nodes[i], nodes[i + 1]
-    hi = t1 - t0
-    left, right = t1 - x, x - t0
-    return (
-        m[i] * left**3 / (6.0 * hi)
-        + m[i + 1] * right**3 / (6.0 * hi)
-        + (values[i] / hi - m[i] * hi / 6.0) * left
-        + (values[i + 1] / hi - m[i + 1] * hi / 6.0) * right
-    )
-
-
-def _cubic_extrema(nodes, values):
-    """Where each segment of the natural spline is stationary, clipped in.
-
-    Both roots of the segment's derivative are returned (shape ``(2 (n - 1),)``),
-    solved without branching so the result is traceable and finite; a root
-    outside the segment or a complex one is clipped to an end or the vertex.
-    """
-    h = np.diff(nodes)
-    m = _spline_moments(nodes, values)
-    m0, m1 = m[:-1], m[1:]
-    a = (m0 + m1) / (2.0 * h)
-    b = m0
-    c = (values[1:] - values[:-1]) / h - h * (m1 - m0) / 6.0 - m0 * h / 2.0
-    tiny = 1e-12 * (np.abs(b) + h * np.abs(a) + 1e-30)
-    disc = np.sqrt(np.maximum(b**2 - 4.0 * a * c, 0.0))
-    q = -0.5 * (b + np.where(b >= 0.0, disc, -disc))
-    small_a = np.abs(a * h) <= tiny
-    safe_a = np.where(small_a, 1.0, a)
-    safe_q = np.where(np.abs(q) <= 1e-30, 1.0, q)
-    safe_b = np.where(np.abs(b) <= 1e-30, 1.0, b)
-    root1 = np.where(small_a, -c / safe_b, q / safe_a)
-    root2 = np.where(small_a, -c / safe_b, c / safe_q)
-    roots = np.clip(np.concatenate([root1, root2]), 0.0, np.tile(h, 2))
-    return np.tile(nodes[:-1], 2) + roots
 
 
 def flux_at(flux, wavel=None):

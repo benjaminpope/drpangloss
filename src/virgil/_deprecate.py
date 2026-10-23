@@ -123,17 +123,6 @@ def _positional_names(params):
     return tuple(n for n, p in params.items() if p.kind in kinds)
 
 
-def _as_keywords(bound, params):
-    """Flatten a binding to keywords, expanding any ``**kwargs``."""
-    out = {}
-    for name, value in bound.arguments.items():
-        if params[name].kind is inspect.Parameter.VAR_KEYWORD:
-            out.update(value)
-        else:
-            out[name] = value
-    return out
-
-
 def renamed(aliases=None):
     """Accept the pre-0.4 keyword names of ``fn``'s parameters until 0.5.
 
@@ -330,7 +319,14 @@ def old_order(*old_names, data, aliases=None, removed=False, keywords=()):
                 stacklevel=external_stacklevel(),
             )
             bound = old_sig.bind(*args, **kwargs)
-            return fn(**_as_keywords(bound, params))
+            # flatten the binding to keywords, expanding any ``**kwargs``
+            out = {}
+            for name, value in bound.arguments.items():
+                if params[name].kind is inspect.Parameter.VAR_KEYWORD:
+                    out.update(value)
+                else:
+                    out[name] = value
+            return fn(**out)
 
         return wrapper
 

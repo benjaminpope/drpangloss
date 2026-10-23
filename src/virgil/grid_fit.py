@@ -316,6 +316,7 @@ class LogUniform(NamedTuple):
 _N_NODES = 256  # Gauss-Legendre nodes in ln f for the log-uniform evidence
 _WINDOW_SIGMA = 12.0  # half-width of the integration window, in sigma_f
 _TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
+# deliberate: named step: the quadrature, documented as a unit
 
 
 def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
@@ -368,42 +369,6 @@ def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     return log_b, mean, np.sqrt(var)
 
 
-def _as_prior(prior):
-    """Validate ``prior`` and return it as ``Gaussian``, ``LogUniform`` or None.
-
-    Accepts numpyro's ``dist.LogUniform(low, high)`` and ``dist.Normal(mean,
-    sd)`` (scalar parameters), converting them to the NamedTuples, as well as
-    the NamedTuples themselves.
-    """
-    if prior is None:
-        return None
-    if isinstance(prior, dist.LogUniform):
-        prior = LogUniform(*_scalar_params(prior, ("low", "high")))
-    elif isinstance(prior, dist.Normal):
-        prior = Gaussian(*_scalar_params(prior, ("loc", "scale")))
-    elif not isinstance(prior, (Gaussian, LogUniform)):
-        hint = (
-            " A bare (mean, sd) tuple is not accepted: use dist.Normal."
-            if isinstance(prior, tuple)
-            else ""
-        )
-        raise TypeError(
-            "prior must be numpyro's dist.LogUniform(low, high) or "
-            "dist.Normal(mean, sd) (or grid_fit.LogUniform / Gaussian), "
-            f"got {prior!r}.{hint}"
-        )
-    a, b = (float(x) for x in prior)
-    if not (math.isfinite(a) and math.isfinite(b)):
-        raise ValueError(
-            f"{type(prior).__name__} needs finite parameters, got {prior}"
-        )
-    if isinstance(prior, LogUniform) and not 0.0 < a < b:
-        raise ValueError(f"LogUniform needs 0 < f_min < f_max, got ({a}, {b})")
-    if isinstance(prior, Gaussian) and not b > 0.0:
-        raise ValueError(f"Gaussian needs sd > 0, got sd = {b}")
-    return type(prior)(np.asarray(a), np.asarray(b))
-
-
 def _scalar_params(d, names):
     """Scalar float parameters of a numpyro distribution, or a clear error."""
     out = []
@@ -432,6 +397,7 @@ class LinearFluxGrid(NamedTuple):
     log_bayes_factor: np.ndarray | None = None
 
 
+# deliberate: jit boundary
 @eqx.filter_jit
 def _linear_flux_grid(
     data,
@@ -565,6 +531,36 @@ def linear_flux_grid(
     >>> res = linear_flux_grid(BinaryModelCartesian, data, grid)  # doctest: +SKIP
     """
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
+    # numpyro's dist.LogUniform / dist.Normal (scalar parameters) become the
+    # NamedTuples; anything else is validated
+    if prior is not None:
+        if isinstance(prior, dist.LogUniform):
+            prior = LogUniform(*_scalar_params(prior, ("low", "high")))
+        elif isinstance(prior, dist.Normal):
+            prior = Gaussian(*_scalar_params(prior, ("loc", "scale")))
+        elif not isinstance(prior, (Gaussian, LogUniform)):
+            hint = (
+                " A bare (mean, sd) tuple is not accepted: use dist.Normal."
+                if isinstance(prior, tuple)
+                else ""
+            )
+            raise TypeError(
+                "prior must be numpyro's dist.LogUniform(low, high) or "
+                "dist.Normal(mean, sd) (or grid_fit.LogUniform / Gaussian), "
+                f"got {prior!r}.{hint}"
+            )
+        a, b = (float(x) for x in prior)
+        if not (math.isfinite(a) and math.isfinite(b)):
+            raise ValueError(
+                f"{type(prior).__name__} needs finite parameters, got {prior}"
+            )
+        if isinstance(prior, LogUniform) and not 0.0 < a < b:
+            raise ValueError(
+                f"LogUniform needs 0 < f_min < f_max, got ({a}, {b})"
+            )
+        if isinstance(prior, Gaussian) and not b > 0.0:
+            raise ValueError(f"Gaussian needs sd > 0, got sd = {b}")
+        prior = type(prior)(np.asarray(a), np.asarray(b))
     return _linear_flux_grid(
         data,
         model,
@@ -574,7 +570,7 @@ def linear_flux_grid(
         flux_key=flux_key,
         batch_size=batch_size_or_default(batch_size, data),
         n_iter=int(n_iter),
-        prior=_as_prior(prior),
+        prior=prior,
     )
 
 

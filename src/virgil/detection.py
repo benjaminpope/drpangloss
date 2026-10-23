@@ -126,7 +126,30 @@ def detection_statistics(
         flux_key=flux_key,
         batch_size=batch_size_or_default(batch_size, data),
     )
-    _warn_if_concrete(stats, success, grid, flux_key)
+    # the checks that need numbers
+    steps = concrete(stats["flux_peak_steps"])
+    if steps is None:  # caveat: traced under jit, so none of these checks run
+        return stats
+    warn_unconverged(success, "detection_statistics")
+    flux = float(concrete(stats[flux_key]))
+    top = float(onp.max(onp.asarray(grid[flux_key])))
+    if flux > top:
+        warnings.warn(
+            f"detection_statistics(): the best flux {flux:.3g} lies above "
+            f"the flux axis (max {top:.3g}), so log_bayes_factor misses the "
+            "likelihood peak; extend the axis.",
+            RuntimeWarning,
+            stacklevel=external_stacklevel(),
+        )
+    elif float(steps) < MIN_PEAK_STEPS:
+        warnings.warn(
+            "detection_statistics(): the flux axis does not resolve the "
+            f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
+            f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
+            "inaccurate; refine the flux axis near the best flux.",
+            RuntimeWarning,
+            stacklevel=external_stacklevel(),
+        )
     return stats
 
 
@@ -232,12 +255,20 @@ def _detection_statistics(
             stats[key] = best_flux
         else:
             stats[key] = coords[best, coord_keys.index(key)]
+    # spacing of the flux axis around the best flux (0 for a single point)
+    axis = np.sort(np.asarray(grid[flux_key]).reshape(-1))
+    if axis.size < 2:
+        flux_step = np.zeros((), axis.dtype)
+    else:
+        i = np.clip(np.searchsorted(axis, best_flux), 1, axis.size - 1)
+        flux_step = axis[i] - axis[i - 1]
     stats["flux_peak_steps"] = (
-        FWHM_PER_SIGMA
-        * sigma.reshape(-1)[best]
-        / _flux_step(grid[flux_key], best_flux)
+        FWHM_PER_SIGMA * sigma.reshape(-1)[best] / flux_step
     )
     return stats, converged
+
+
+# deliberate: test seam: unit-tested directly
 
 
 def _constrained_profile(
@@ -259,6 +290,9 @@ def _constrained_profile(
     )
 
 
+# deliberate: test seam: unit-tested directly
+
+
 def _log_prior_weights(shape, dtype):
     """Log trapezoid weights in the grid index, normalized to sum to 1.
 
@@ -273,42 +307,6 @@ def _log_prior_weights(shape, dtype):
         w = onp.log(w / w.sum())
         log_w = log_w + w.reshape((-1,) + (1,) * (len(shape) - axis - 1))
     return log_w
-
-
-def _flux_step(flux_axis, flux):
-    """Spacing of ``flux_axis`` around ``flux`` (0 for a single point)."""
-    axis = np.sort(np.asarray(flux_axis).reshape(-1))
-    if axis.size < 2:
-        return np.zeros((), axis.dtype)
-    i = np.clip(np.searchsorted(axis, flux), 1, axis.size - 1)
-    return axis[i] - axis[i - 1]
-
-
-def _warn_if_concrete(stats, success, grid, flux_key):
-    """The checks of :func:`detection_statistics` that need numbers."""
-    steps = concrete(stats["flux_peak_steps"])
-    if steps is None:  # caveat: traced under jit, so none of these checks run
-        return
-    warn_unconverged(success, "detection_statistics")
-    flux = float(concrete(stats[flux_key]))
-    top = float(onp.max(onp.asarray(grid[flux_key])))
-    if flux > top:
-        warnings.warn(
-            f"detection_statistics(): the best flux {flux:.3g} lies above "
-            f"the flux axis (max {top:.3g}), so log_bayes_factor misses the "
-            "likelihood peak; extend the axis.",
-            RuntimeWarning,
-            stacklevel=external_stacklevel(),
-        )
-    elif float(steps) < MIN_PEAK_STEPS:
-        warnings.warn(
-            "detection_statistics(): the flux axis does not resolve the "
-            f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
-            f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
-            "inaccurate; refine the flux axis near the best flux.",
-            RuntimeWarning,
-            stacklevel=external_stacklevel(),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +652,19 @@ def injection_recovery(
     ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = _resolve_keys(grid, flux_param)
-    names = _canonical_names(params, flux_key)
+    # short names of the grid keys (their last dotted part); the outputs are
+    # stored under ``_STORED``, ``best_<name>`` and (for the injected values)
+    # ``<name>``, all of which must be distinct, or one would overwrite another
+    names = {k: k.rsplit(".", 1)[-1] for k in params}
+    names[flux_key] = "flux"
+    short = list(names.values())
+    fields = list(_STORED) + short + [f"best_{n}" for n in short]
+    if len(set(fields)) != len(fields):
+        raise ValueError(
+            f"The grid keys {list(params)} have last parts {short}, which "
+            "repeat or clash with the stored outputs (statistics, "
+            "diagnostics and best_<name>); rename them."
+        )
     n_null = int(n_null)
     if n_null < 0:
         raise ValueError(f"n_null must be non-negative; got {n_null}.")
@@ -682,10 +692,33 @@ def injection_recovery(
         "the model at zero companion flux",
         "null_scene",
     )
-    inj_values = _injection_values(injections, params, names)
+    # ``(n, len(params))`` float32 injection values in ``params`` order
+    if injections is None:
+        inj_values = onp.zeros((0, len(params)), dtype=onp.float32)
+    else:
+        columns = {
+            k: onp.asarray(
+                _lookup(injections, k, names[k]), dtype=float
+            ).ravel()
+            for k in params
+        }
+        if len({c.size for c in columns.values()}) != 1:
+            raise ValueError("The injection arrays must all have one length.")
+        flux = [c for k, c in columns.items() if names[k] == "flux"][0]
+        if onp.any(flux < 0.0):
+            raise ValueError("Injected fluxes must be non-negative.")
+        inj_values = onp.stack([columns[k] for k in params], axis=1).astype(
+            onp.float32
+        )
     n_inj = inj_values.shape[0]
     draw_batch, grid_batch = _batch_sizes(batch_size, template, draw_batch)
-    chunk = _chunk_size(chunk_size, draw_batch, max(n_null, n_inj))
+    if chunk_size is None:
+        chunk = min(64, max(n_null, n_inj, 1))
+    else:
+        chunk = int(chunk_size)
+        if chunk < 1:
+            raise ValueError(f"chunk_size must be positive; got {chunk}.")
+    chunk = -(-chunk // draw_batch) * draw_batch
     # JSON description of ``key``, to tell array jobs apart.
     if isinstance(key, (int, onp.integer)):
         seed = {"seed": int(key)}
@@ -699,7 +732,18 @@ def injection_recovery(
         "batch_size": grid_batch,
         "draw_batch": draw_batch if draw_batch > 1 else None,
     }
-    bar = _progress_bar(-(-n_null // chunk) - (-n_inj // chunk), progress)
+    bar = None
+    if progress and n_null + n_inj > 0:
+        try:
+            from tqdm.auto import tqdm
+
+            bar = tqdm(
+                total=-(-n_null // chunk) - (-n_inj // chunk),
+                desc="injection_recovery",
+                leave=False,
+            )
+        except ImportError:
+            pass
 
     def run(stream, values):
         # Stream 0 is the null, 1 the injections; draw i folds in i, so
@@ -728,7 +772,11 @@ def injection_recovery(
             )
             if bar is not None:
                 bar.update(1)
-        return _gather(out, params, names)
+        # per-chunk statistics concatenated; best positions as best_<name>
+        gathered = {stat: _concat([c[stat] for c in out]) for stat in _STORED}
+        for k in params:
+            gathered[f"best_{names[k]}"] = _concat([c[k] for c in out])
+        return gathered
 
     try:
         null = run(0, onp.zeros((n_null, len(params)), dtype=onp.float32))
@@ -774,6 +822,7 @@ def injection_recovery(
     return DetectionMC(null=null, injected=injected, meta=meta)
 
 
+# deliberate: jit boundary (eqx.filter_jit); compile-count tests monkeypatch it
 @eqx.filter_jit
 def _simulated_statistics(
     simulator,
@@ -848,26 +897,6 @@ def _raw_key(key):
     return np.asarray(key)
 
 
-def _canonical_names(params, flux_key):
-    """Short names of the grid keys: their last dotted part.
-
-    The outputs are stored under ``_STORED``, ``best_<name>`` and (for the
-    injected values) ``<name>``; all of them must be distinct, or one
-    would overwrite another.
-    """
-    names = {k: k.rsplit(".", 1)[-1] for k in params}
-    names[flux_key] = "flux"
-    short = list(names.values())
-    fields = list(_STORED) + short + [f"best_{n}" for n in short]
-    if len(set(fields)) != len(fields):
-        raise ValueError(
-            f"The grid keys {list(params)} have last parts {short}, which "
-            "repeat or clash with the stored outputs (statistics, "
-            "diagnostics and best_<name>); rename them."
-        )
-    return names
-
-
 def _lookup(injections, key, name):
     if key in injections:
         return injections[key]
@@ -879,30 +908,7 @@ def _lookup(injections, key, name):
     )
 
 
-def _injection_values(injections, params, names):
-    """``(n, len(params))`` float32 injection values in ``params`` order."""
-    if injections is None:
-        return onp.zeros((0, len(params)), dtype=onp.float32)
-    columns = {
-        k: onp.asarray(_lookup(injections, k, names[k]), dtype=float).ravel()
-        for k in params
-    }
-    if len({c.size for c in columns.values()}) != 1:
-        raise ValueError("The injection arrays must all have one length.")
-    flux = [c for k, c in columns.items() if names[k] == "flux"][0]
-    if onp.any(flux < 0.0):
-        raise ValueError("Injected fluxes must be non-negative.")
-    return onp.stack([columns[k] for k in params], axis=1).astype(onp.float32)
-
-
-def _chunk_size(chunk_size, draw_batch, n_max):
-    if chunk_size is None:
-        chunk = min(64, max(n_max, 1))
-    else:
-        chunk = int(chunk_size)
-        if chunk < 1:
-            raise ValueError(f"chunk_size must be positive; got {chunk}.")
-    return -(-chunk // draw_batch) * draw_batch
+# deliberate: test seam: unit-tested directly
 
 
 def _batch_sizes(batch_size, template, draw_batch):
@@ -917,6 +923,9 @@ def _batch_sizes(batch_size, template, draw_batch):
         return draw_batch, default
     draw_batch = min(draw_batch, default)
     return draw_batch, default // draw_batch
+
+
+# deliberate: named step: validates a simulator against the template
 
 
 def _simulator(noise, template, null_scene):
@@ -964,24 +973,6 @@ def _check_same_prediction(template, a, b, name_a, name_b, tol=1e-3):
             "the null hypothesis the statistics test, so the two must "
             "agree."
         )
-
-
-def _progress_bar(total, enabled):
-    if not enabled or total == 0:
-        return None
-    try:
-        from tqdm.auto import tqdm
-    except ImportError:
-        return None
-    return tqdm(total=total, desc="injection_recovery", leave=False)
-
-
-def _gather(chunks, params, names):
-    """Concatenate per-chunk statistics; best positions as best_<name>."""
-    out = {stat: _concat([c[stat] for c in chunks]) for stat in _STORED}
-    for k in params:
-        out[f"best_{names[k]}"] = _concat([c[k] for c in chunks])
-    return out
 
 
 def _concat(arrays):
@@ -1260,21 +1251,6 @@ class DetectionMC:
         scores = self._scores(self.injected, stat)
         return (scores > threshold) & self.matched()
 
-    def _select(self, flux=None, sep_bin=None):
-        keep = onp.ones(self.n_injected, dtype=bool)
-        if flux is not None:
-            f = self.injected["flux"]
-            if onp.ndim(flux) == 0:
-                keep &= onp.isclose(f, float(flux), rtol=1e-6, atol=0.0)
-            else:
-                lo, hi = flux
-                keep &= (f >= lo) & (f < hi)
-        if sep_bin is not None:
-            lo, hi = sep_bin
-            sep = self.separations()
-            keep &= (sep >= lo) & (sep < hi)
-        return keep
-
     def roc(self, stat, flux=None, sep_bin=None):
         """ROC curve: true- against false-positive rate over thresholds.
 
@@ -1295,7 +1271,18 @@ class DetectionMC:
             (matched, with ``match_radius``) at or above it.
         """
         null = onp.sort(self._null_scores(stat))
-        keep = self._select(flux, sep_bin)
+        keep = onp.ones(self.n_injected, dtype=bool)
+        if flux is not None:
+            f = self.injected["flux"]
+            if onp.ndim(flux) == 0:
+                keep &= onp.isclose(f, float(flux), rtol=1e-6, atol=0.0)
+            else:
+                lo, hi = flux
+                keep &= (f >= lo) & (f < hi)
+        if sep_bin is not None:
+            lo, hi = sep_bin
+            sep = self.separations()
+            keep &= (sep >= lo) & (sep < hi)
         if not onp.any(keep):
             raise ValueError("No injections match the selection.")
         scores = self._scores(self.injected, stat)[keep]
@@ -1509,19 +1496,17 @@ class DetectionMC:
         return cls(null=merge("null"), injected=merge("injected"), meta=meta)
 
 
-def _round_sig(x, digits=6):
-    """``x`` rounded to ``digits`` significant figures (0 stays 0)."""
-    x = onp.asarray(x, dtype=float)
-    with onp.errstate(divide="ignore"):
-        mag = onp.where(x == 0.0, 0.0, onp.floor(onp.log10(onp.abs(x))))
-    scale = 10.0 ** (digits - 1 - mag)
-    return onp.round(x * scale) / scale
-
-
 def _bin(values, edges, geometric):
     """Bin indices (-1 outside) and labels: distinct values or centres."""
     if edges is None:
-        labels, index = onp.unique(_round_sig(values), return_inverse=True)
+        # distinct values, to 6 significant figures (0 stays 0)
+        x = onp.asarray(values, dtype=float)
+        with onp.errstate(divide="ignore"):
+            mag = onp.where(x == 0.0, 0.0, onp.floor(onp.log10(onp.abs(x))))
+        scale = 10.0 ** (5 - mag)
+        labels, index = onp.unique(
+            onp.round(x * scale) / scale, return_inverse=True
+        )
         return index.reshape(-1), labels
     edges = onp.asarray(edges, dtype=float)
     index = onp.searchsorted(edges, values, side="right") - 1
