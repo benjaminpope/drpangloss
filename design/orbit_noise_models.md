@@ -4,7 +4,7 @@ Status (2026-10-20): design reviewed and decided (§6), partly implemented. Scop
 `OrbitPipeline`/`fit_orbit_aliases` and the virgil-vlti data path into them. Instrument noise
 modelling stays in virgil-vlti; virgil only consumes the data and modes it hands over. Worked
 examples: a GRAVITY orbit gallery (OzSTAR 18821038/18826461/18826486, virgil e3e1f2d, results
-in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the release gate.
+in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the release gate (through 0.4.1; retired 2026-10-23).
 
 ## 0. Status on main
 
@@ -203,9 +203,10 @@ V² stay labelled legacy until rerun.
    the sky plane (Thiele–Innes) where the papers solved them, the failing system's top band is
    near its published period (36.5 d for HD 9312), and every miss is explained by flags or an
    absence of calibrators.
-4. **Release gate (Gl 229).** It stays on its current path: N = 34 first with Δlog Z > 10. It
-   passed at virgil 0696558 (OzSTAR 18849983: N = 34, P = 12.132 d, Δlog Z 22.8 over N = 62).
-   Once a dual-field template exists, add an in-field-calibrated run, which must also pass.
+4. **Release gate (Gl 229)** (was the release gate through 0.4.1; retired 2026-10-23). The
+   criterion was N = 34 first with Δlog Z > 10. It passed at virgil 0696558 (OzSTAR 18849983:
+   N = 34, P = 12.132 d, Δlog Z 22.8 over N = 62). An in-field-calibrated run, once a dual-field
+   template exists, is optional.
 5. **Held-out check of the noise model (optional).** `virgil.crossval` (virgil#440) can score
    leave-one-night-out log likelihoods with and without the gains. A noise model that is
    adequate should not lose held-out likelihood.

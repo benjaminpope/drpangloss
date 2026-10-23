@@ -13,8 +13,8 @@ Status (2026-10-20): **the canonical orbit plan.** It supersedes
 - Next: phase 2 (vv consolidation) and Phase 3 (the OzSTAR golden table).
 - `orbit_search.score_orbits` ships as **provisional** in 0.4.0, with the rest
   of `epochs`, `aliases` and `tempering` (`docs/stability.md`).
-- Release gate: the unattended run on the Gl 229 data stays the gate for 0.4.0
-  (Ben's decision, 2026-10-16). The release review's proposal to move the gate
+- Release gate: the unattended run on the Gl 229 data was the gate for 0.4.0
+  (Ben's decision, 2026-10-16) and through 0.4.1; retired 2026-10-23. The release review's proposal to move the gate
   to the release that promotes `OrbitPipeline` was not adopted.
 
 ## Context

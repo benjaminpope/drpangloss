@@ -5,6 +5,12 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Changed
+
+- The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
+
 ## 0.4.1 (2026-10-23)
 
 0.4.1 is a consolidation release. It adds no new model families. It makes the
