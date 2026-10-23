@@ -3,25 +3,25 @@
 
 An estimate of the energy and carbon emitted in developing and validating virgil: AI coding assistants, continuous integration and cluster jobs. It is refreshed by hand with `python3 scripts/dev_carbon.py`, so it lags the repository.
 
-Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-22: **317 kg CO₂e** (range 290–442 kg), from 610 kWh (range 529–944 kWh). Data analysis runs are listed separately below and are not in this total.
+Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-23: **328 kg CO₂e** (range 299–459 kg), from 643 kWh (range 555–995 kWh). Data analysis runs are listed separately below and are not in this total.
 
 ## In everyday terms
 
-The total of 317 kg CO₂e set against the three nearest items, on a log scale, in the [ALPLA CO₂ Comparison Tool](https://www.alpla.com/en/sustainability/co2-comparison-tool): the table the carbon tool uses for its everyday equivalents. The per-item figures are ALPLA's own, read from the calculator on 2026-10-01 (ALPLA is a plastic packaging maker), and have not been checked independently. The range follows the low and high totals.
+The total of 328 kg CO₂e set against the three nearest items, on a log scale, in the [ALPLA CO₂ Comparison Tool](https://www.alpla.com/en/sustainability/co2-comparison-tool): the table the carbon tool uses for its everyday equivalents. The per-item figures are ALPLA's own, read from the calculator on 2026-10-01 (ALPLA is a plastic packaging maker), and have not been checked independently. The range follows the low and high totals.
 
 | Item | kg CO₂e each | Equivalent to | Range |
 |---|---:|---:|---:|
-| Tree's annual CO₂ uptake | 24.62 | 13 | 12–18 |
-| Manufactured smartphone | 80 | 4 | 3.6–5.5 |
-| Economy flight Zurich–London | 232 | 1.4 | 1.2–1.9 |
+| Tree's annual CO₂ uptake | 24.62 | 13 | 12–19 |
+| Manufactured smartphone | 80 | 4.1 | 3.7–5.7 |
+| Economy flight Zurich–London | 232 | 1.4 | 1.3–2 |
 
 ## By source
 
 | Source | Items | kWh | kWh range | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|---:|
 | OzSTAR/NT Slurm jobs | 2928 | 280 | 279–315 | 207 | 207–233 |
-| Claude Code | 653 | 280 | 224–505 | 92.6 | 74–167 |
-| GitHub Actions CI | 8113 | 28.5 | 17.9–28.5 | 10.6 | 6.62–10.6 |
+| Claude Code | 746 | 308 | 247–550 | 102 | 81.5–181 |
+| GitHub Actions CI | 9889 | 34.4 | 21.6–34.4 | 12.7 | 7.97–12.7 |
 | Copilot cloud agent and review | 261 | 12.2 | 3.41–47 | 4.05 | 1.14–15.5 |
 | VS Code Copilot Chat | 253 | 9.35 | 3.82–48.9 | 3.09 | 1.26–16.1 |
 
@@ -30,8 +30,8 @@ The total of 317 kg CO₂e set against the three nearest items, on a log scale, 
 | Source | Type | Items | kWh | kg CO₂e | kg range |
 |---|---|---:|---:|---:|---:|
 | OzSTAR/NT Slurm jobs | GPU job | 2295 | 269 | 199 | 199–225 |
-| Claude Code | model calls | 653 | 280 | 92.6 | 74–167 |
-| GitHub Actions CI | CI | 8113 | 28.5 | 10.6 | 6.62–10.6 |
+| Claude Code | model calls | 746 | 308 | 102 | 81.5–181 |
+| GitHub Actions CI | CI | 9889 | 34.4 | 12.7 | 7.97–12.7 |
 | OzSTAR/NT Slurm jobs | CPU job | 633 | 10.8 | 7.97 | 7.97–7.97 |
 | Copilot cloud agent and review | code review | 202 | 11 | 3.63 | 0.99–14 |
 | VS Code Copilot Chat | local chat | 88 | 6.23 | 2.06 | 1.26–10.6 |
@@ -42,67 +42,67 @@ Claude Code by token type (mid estimate):
 
 | Token type | Tokens | kg CO₂e |
 |---|---:|---:|
-| input | 270,829 | 0.0163 |
-| cache write | 175,018,854 | 12.1 |
-| cache read | 8,049,354,804 | 49.4 |
-| output | 19,494,300 | 31 |
+| input | 281,901 | 0.0169 |
+| cache write | 190,600,043 | 13.1 |
+| cache read | 8,834,821,982 | 53.3 |
+| output | 22,601,235 | 35.2 |
 
 By model or workflow:
 
 | Source | Model or workflow | Items | kg CO₂e | kg range |
 |---|---|---:|---:|---:|
-| Claude Code | Claude Opus | 330 | 74.9 | 59.4–137 |
-| Claude Code | Claude Sonnet | 308 | 17.6 | 14.6–29.9 |
-| GitHub Actions CI | automated tests | 1503 | 10.2 | 6.39–10.2 |
+| Claude Code | Claude Opus | 344 | 79.8 | 63.6–145 |
+| Claude Code | Claude Sonnet | 387 | 21.6 | 17.9–36.5 |
+| GitHub Actions CI | automated tests | 1733 | 12.3 | 7.7–12.3 |
 | VS Code Copilot Chat | gpt-5.3-codex | 172 | 1.07 | 0.0272–5.77 |
 | VS Code Copilot Chat | gpt-5.6-terra | 23 | 1.02 | 0.509–5.94 |
 | VS Code Copilot Chat | claude-sonnet-5 | 19 | 0.393 | 0.393–1.52 |
 | VS Code Copilot Chat | gpt-5.5-2026-04-23 | 13 | 0.285 | 0.142–1.09 |
 | VS Code Copilot Chat | gpt-5.6-sol | 5 | 0.124 | 0.062–1.12 |
-| GitHub Actions CI | lint | 1434 | 0.0971 | 0.0609–0.0971 |
+| GitHub Actions CI | lint | 1666 | 0.122 | 0.0764–0.122 |
+| GitHub Actions CI | claude review | 2926 | 0.108 | 0.0676–0.108 |
+| GitHub Actions CI | Documentation (Zensical) | 1256 | 0.0904 | 0.0567–0.0904 |
 | GitHub Actions CI | Documentation | 705 | 0.0834 | 0.0523–0.0834 |
-| GitHub Actions CI | claude review | 2046 | 0.0791 | 0.0496–0.0791 |
-| GitHub Actions CI | Documentation (Zensical) | 1026 | 0.0741 | 0.0465–0.0741 |
 | VS Code Copilot Chat | gpt-5.5 | 2 | 0.0708 | 0.0354–0.179 |
 | Claude Code | Claude Haiku | 15 | 0.0689 | 0.0621–0.0963 |
 | VS Code Copilot Chat | claude-opus-5 | 3 | 0.0516 | 0.0516–0.121 |
 | VS Code Copilot Chat | gpt-5.6-luna | 7 | 0.0378 | 0.0192–0.269 |
+| GitHub Actions CI | ozstar-sync | 910 | 0.024 | 0.015–0.024 |
 | VS Code Copilot Chat | mai-code-1.1-flash | 5 | 0.0196 | 0.0196–0.0617 |
-| GitHub Actions CI | ozstar-sync | 713 | 0.0186 | 0.0117–0.0186 |
 | VS Code Copilot Chat | claude-haiku-4.5 | 3 | 0.0113 | 0.00215–0.0512 |
 | VS Code Copilot Chat | copilot/auto | 1 | 0.00897 | 0–0.0179 |
-| GitHub Actions CI | Dependency Graph | 40 | 0.00795 | 0.00498–0.00795 |
+| GitHub Actions CI | Dependency Graph | 44 | 0.00846 | 0.00531–0.00846 |
 | GitHub Actions CI | review response label | 548 | 0.00562 | 0.00353–0.00562 |
 | GitHub Actions CI | debug macos | 4 | <0.001 | <0.001–<0.001 |
-| GitHub Actions CI | copilot-setup-steps | 18 | <0.001 | <0.001–<0.001 |
-| GitHub Actions CI | upgrade uv.lock | 7 | <0.001 | <0.001–<0.001 |
+| GitHub Actions CI | copilot-setup-steps | 19 | <0.001 | <0.001–<0.001 |
+| GitHub Actions CI | upgrade uv.lock | 9 | <0.001 | <0.001–<0.001 |
 | GitHub Actions CI | pages-build-deployment | 7 | <0.001 | <0.001–<0.001 |
 | GitHub Actions CI | publish to PyPI | 2 | <0.001 | <0.001–<0.001 |
 | GitHub Actions CI | size comment | 1 | <0.001 | <0.001–<0.001 |
 | GitHub Actions CI | .github/workflows/review-response-label.yml | 56 | 0 | 0–0 |
 | GitHub Actions CI | full CI on label | 3 | 0 | 0–0 |
 
-## By feature (top 15 of 408)
+## By feature (top 15 of 463)
 
 Each item is attributed to a pull request through its branch, the commit a job pinned, or the PR a Copilot run served, and labelled with the PR title.
 
 | Feature | Items | kg CO₂e | kg range |
 |---|---:|---:|---:|
 | Validation: imaging contests | 2293 | 199 | 198–225 |
-| main / unattributed | 581 | 43 | 33–88.9 |
-| [#364](https://github.com/benjaminpope/virgil/pull/364) Fix contributors nesting; drop duplicate docs list from README and index | 82 | 11.8 | 9.79–20 |
+| main / unattributed | 605 | 44 | 33.8–90.4 |
+| [#364](https://github.com/benjaminpope/virgil/pull/364) Fix contributors nesting; drop duplicate docs list from README and index | 96 | 16 | 13.3–27 |
 | [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 29 | 4.1 | 3.2–7.7 |
 | [#401](https://github.com/benjaminpope/virgil/pull/401) Docs examples: fix failing pages and stale outputs from the GPU gate | 82 | 3.65 | 3.58–3.87 |
 | [#435](https://github.com/benjaminpope/virgil/pull/435) Temper the short-arc sign gate and the cut's errors by f (Gl 229 gate) | 109 | 2.71 | 2.68–2.78 |
-| [#399](https://github.com/benjaminpope/virgil/pull/399) Release 0.4.0: version, uv.lock and restructured changelog | 203 | 1.58 | 1.17–2.07 |
+| [#399](https://github.com/benjaminpope/virgil/pull/399) Release 0.4.0: version, uv.lock and restructured changelog | 204 | 1.58 | 1.17–2.07 |
 | [#76](https://github.com/benjaminpope/virgil/pull/76) Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose | 25 | 1.43 | 1.07–2.84 |
 | Validation: simulation-based calibration | 198 | 1.35 | 1.35–1.35 |
 | [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 13 | 1.34 | 1.07–2.41 |
 | [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 16 | 1.28 | 0.977–2.47 |
 | [#292](https://github.com/benjaminpope/virgil/pull/292) Orbit search design (§14 revision) | 65 | 1.2 | 0.994–1.99 |
 | [#369](https://github.com/benjaminpope/virgil/pull/369) Add DiskPipeline (provisional): rings and GP disk models | 150 | 1.03 | 0.847–1.58 |
+| [#516](https://github.com/benjaminpope/virgil/pull/516) radio_toeplitz: dirty-beam (Toeplitz) χ² for one-Image radio fits (PR 1, core) | 60 | 1.02 | 0.865–1.52 |
 | [#347](https://github.com/benjaminpope/virgil/pull/347) PolarDisk P5: tutorial, a planet in a gap between inclined rings | 58 | 0.942 | 0.741–1.63 |
-| [#425](https://github.com/benjaminpope/virgil/pull/425) Seed alias bands from short arcs: night velocities narrow the cycle counts | 50 | 0.734 | 0.607–1.15 |
 
 
 ## Copilot cross-check

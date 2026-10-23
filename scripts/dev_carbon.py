@@ -16,7 +16,8 @@ data-analysis work. That archive is the permanent copy in git; live
 records are regenerated from their sources on each run. The report
 combines both into ``docs/generated/dev_carbon.json`` and
 ``docs/dev_carbon.md``. This script then rewrites the README badge between
-``<!-- dev-carbon-badge -->`` markers, adds everyday equivalents from the
+``<!-- dev-carbon-badge -->`` markers (an endpoint badge reading
+``docs/generated/dev_carbon_badge.json``, which the docs site serves), adds everyday equivalents from the
 tool's ``token_carbon.COMPARISONS`` and runs
 ``scripts/sync_tutorial_docs.py`` for ``docs/index.md``.
 
@@ -35,12 +36,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "scripts" / "dev_carbon.toml"
 ARCHIVE = ROOT / "docs" / "generated" / "dev_carbon_archive.json"
 SUMMARY = ROOT / "docs" / "generated" / "dev_carbon.json"
 PAGE = ROOT / "docs" / "dev_carbon.md"
+BADGE_JSON = ROOT / "docs" / "generated" / "dev_carbon_badge.json"
+BADGE_JSON_URL = (
+    "https://benjaminpope.github.io/virgil/generated/dev_carbon_badge.json"
+)
 README = ROOT / "README.md"
 PAGE_URL = "https://benjaminpope.github.io/virgil/dev_carbon/"
 BADGE = re.compile(
@@ -209,11 +215,34 @@ def page(fragment, summary, home):
 
 
 def write_badge(summary):
+    """Write the shields.io endpoint JSON and point the README badge at it.
+
+    The README is frozen into each PyPI release, so the badge is an endpoint
+    badge: it reads the JSON the docs site serves, which is always current.
+    """
+    kg = summary["total"]["kg"][1]
+    BADGE_JSON.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "label": "dev carbon",
+                "message": f"{kg:.0f} kg CO₂e",
+                "color": "2e7d32",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "utf-8",
+    )
+    url = "https://img.shields.io/endpoint?url=" + quote(
+        BADGE_JSON_URL, safe=""
+    )
     # Markers go on their own lines: a line starting with an HTML comment is
     # raw HTML to Markdown, so the badge on that line would render as text.
     badge = (
         "<!-- dev-carbon-badge -->\n"
-        f"[![{summary['badge']['text']}]({summary['badge']['url']})]"
+        f"[![{summary['badge']['text']}]({url})]"
         f"({PAGE_URL})\n"
         "<!-- /dev-carbon-badge -->"
     )
