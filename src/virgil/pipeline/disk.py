@@ -192,14 +192,14 @@ class DiskPipeline(_Pipeline):
 
     The star is a grey point source unless ``star_diameter_mas``,
     ``star_temperature_k`` or ``star_index`` says otherwise; the disk's
-    spectral index is relative to it. Stages: ``load`` (applies ``wavel_range`` and ``error_floor``), ``overview`` (plots;
-    sets the half-fringe λ/2B), ``geometry`` (χ² grid over cos ``inc`` and
+    spectral index is relative to it. Stages: ``load`` (``wavel_range`` [min, max] in metres; ``error_floor`` a dict of absolute floors), ``overview`` (plots;
+    sets the half-fringe λ/2B of the longest baseline), ``geometry`` (χ² grid over cos ``inc`` and
     ``pa``, then a single-ring fit), ``profile``, ``compare``, ``posterior``
     (NUTS, with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
     ``RadialGP`` profile at each length scale and keeps the largest Laplace
     evidence; ``"rings"`` adds Gaussian rings until the BIC stops improving.
-    ``run()`` returns a ``Result`` (``res.summary["disk"]``, ``res.model()``,
-    ``res.checks``). All settings, with defaults:
+    ``run()`` returns a ``Result``: ``res.summary["disk"]`` (``n_rings`` and
+    ``rings`` for ``"rings"``), ``res.model()`` (the best fit), ``res.checks``. All settings, with defaults:
     [pipeline settings](../pipeline.md#diskpipeline-settings).
 
     Parameters
