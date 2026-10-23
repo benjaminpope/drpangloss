@@ -7,6 +7,10 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
+
 ### Fixed
 
 - `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
