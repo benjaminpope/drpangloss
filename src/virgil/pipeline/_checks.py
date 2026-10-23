@@ -676,7 +676,7 @@ def length_scale(
         Spread of the evidences (max − min) below which ℓ is not measured.
     edge : str or None, optional
         ``"low"`` or ``"high"`` when the best ℓ is still the smallest or
-        largest of the grid after its one extension.
+        largest of the grid after its one extension (the grid chose its edge).
     extended : str or None, optional
         The side the grid was extended on (``None`` if it was not).
     """

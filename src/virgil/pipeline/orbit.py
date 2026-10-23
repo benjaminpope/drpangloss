@@ -97,7 +97,8 @@ class OrbitPipeline(_Pipeline):
     The data must be prepared already (the instrument's channel, band and
     noise handling). Stages: ``load`` (group into nights), ``epochs``
     ([`epoch_positions`][virgil.epochs.epoch_positions]), ``search``
-    ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases], blind),
+    ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] with no published
+    period, window or prior),
     ``modes`` (rank the bands; compare with a single star), ``posterior``
     (NUTS per significant band) and ``quicklook``. ``summary["modes"]["winner"]``
     is the winning alias band, ``["delta_log_z"]`` its margin (nats) over the
@@ -598,7 +599,9 @@ def _night_positions(p):  # deliberate: named step
             "ddec": axis,
             "flux": onp.geomspace(lo, hi, 13),
         }
-        step = 2 * half / (n - 1)  # max_grid coarsens beyond ``wanted``
+        step = (
+            2 * half / (n - 1)
+        )  # max_grid coarsens beyond ``wanted`` (the report says so)
         # Only the last pass's warnings (an edge, say) describe the result.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
