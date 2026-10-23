@@ -42,45 +42,6 @@ _KERNELSPEC = {
 }
 
 
-def _intro(run):  # deliberate: named notebook cell
-    inputs = run["inputs"]
-    if inputs["files"]:
-        files = "\n".join(
-            f"- `{Path(f['path']).name}` (sha256 `{f['sha256'][:12]}…`)"
-            for f in inputs["files"]
-        )
-    else:
-        files = (
-            "- data passed in memory (observables sha256 "
-            f"`{inputs['data_sha256'][:12]}…`)"
-        )
-    stages = ", ".join(
-        f"`{name}` ({entry.get('seconds', 0):.1f} s)"
-        for name, entry in run["stages"].items()
-        if entry.get("status") == "complete"
-    )
-    settings = ", ".join(
-        f"`{k}={f'{v:.4g}' if isinstance(v, float) else v}`"
-        for k, v in run["config"].items()
-    )
-    prov = run["provenance"]
-    note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
-    return (
-        note + f"# Quicklook: {run['class']}\n\n"
-        f"This notebook was written by the virgil `{run['pipeline']}` pipeline "
-        f"({run['stability']}, schema `{run['schema']}`) and fitted a "
-        f"`{run['model']['class']}` template.\n\n"
-        f"Inputs:\n\n{files}\n\n"
-        f"Stages run: {stages or 'none'}.\n\n"
-        f"Settings: {settings}.\n\n"
-        f"Versions: virgil {prov['virgil']}, JAX {prov['jax']}, numpyro "
-        f"{prov['numpyro']}, on {prov['backend']} (x64 "
-        f"{'on' if prov['x64'] else 'off'}).\n\n"
-        "The first cell reloads the run from this folder, without recomputing "
-        "anything, and prints its key numbers."
-    )
-
-
 def _completed(run):
     """Names of the stages that completed."""
     return {
@@ -112,71 +73,6 @@ def _corner_code(sites):
     )
 
 
-# deliberate: one notebook cell; the dispatcher lists them
-def _binary_search_cell(run, summary):
-    search, limits = summary["search"], summary["limits"]
-    # The curve of the limits stage: same annuli as the saved plot.
-    bins = run["config"].get("limit_bins", _LIMIT_BINS)
-    cap = search.get("alias_cap_mas")
-    capped = (
-        f" The search box is capped at ±{cap:.0f} mas, the alias limit of "
-        "the uv lattice; set `max_sep_mas` to search further out."
-        if cap
-        else ""
-    )
-    return (
-        "## Search and limits\n\n"
-        "The left panel is the Δχ² of a point companion over the grid, "
-        f"peaking at Δχ² = {search['delta_chi2']:.3g} "
-        f"({format_sigma(search['local_nsigma'])} local, "
-        f"{format_sigma(search['global_nsigma'])} after the "
-        f"look-elsewhere correction for {search['n_trials']:.0f} "
-        f"resolution elements).{capped} "
-        f"The right panel is the {limits['sigma']:g}σ contrast curve "
-        "(Absil method), the median limit in annuli about the star.",
-        "grid = res.grid()\n"
-        "fig, (left, right) = plt.subplots(1, 2, figsize=(13, 5))\n"
-        'plotting.plot_grid_map(grid["delta_chi2"], grid["axes"], '
-        'kind="loglike", label="Δχ²", title="Δχ²", ax=left)\n'
-        'plotting.plot_contrast_curve(grid["limit_flux"], grid["axes"], '
-        f"sigma={limits['sigma']!r}, r_max={search['max_sep_mas']!r}, "
-        f"bins={bins!r}, ax=right)\n"
-        "fig.tight_layout()",
-    )
-
-
-# deliberate: one notebook cell; the dispatcher lists them
-def _binary_fit_cell(summary, posterior, has_data):
-    chi2 = summary["chi2"]
-    source = "posterior" if posterior else "fit"
-    samples = (
-        "samples = res.samples(group_by_chain=False)\n"
-        "step = max(1, samples[params[0]].size // 100)\n"
-        "draws = {p: samples[p][::step] for p in params}\n"
-        if posterior
-        else "draws = {p: [fit.values[p]] for p in params}\n"
-    )
-    if has_data:
-        code = (
-            "data = res.data()\nfit = res.fit_result()\n"
-            'params = list(res.summary["fit"]["params"])\n'
-            f"{samples}"
-            "pred = posterior_predictive_summary(draws, fit.model, data, params)\n"
-            f'fig = plotting.plot_data_model_correlation(data, {{"{source}": pred}})'
-        )
-    else:
-        code = 'display(Image("plots/fit_correlation.png"))'
-    return (
-        "## Fit quality\n\n"
-        f"On the quoted errors, χ²/N = {chi2['companion_reduced']:.3g} for "
-        f"the best-fit binary and {chi2['null_reduced']:.3g} for the star "
-        f"alone, over N = {chi2['n_independent']} independent observables. "
-        "The correlation plot compares the model "
-        f"({source} predictive mean) with the data.",
-        code,
-    )
-
-
 def _binary_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
@@ -184,9 +80,69 @@ def _binary_cells(run, summary, path):  # deliberate: dispatch-table callable
     if "overview" in done:
         cells.append(_data_cell(has_data))
     if {"search", "limits"} <= done:
-        cells.append(_binary_search_cell(run, summary))
+        search, limits = summary["search"], summary["limits"]
+        # The curve of the limits stage: same annuli as the saved plot.
+        bins = run["config"].get("limit_bins", _LIMIT_BINS)
+        cap = search.get("alias_cap_mas")
+        capped = (
+            f" The search box is capped at ±{cap:.0f} mas, the alias limit of "
+            "the uv lattice; set `max_sep_mas` to search further out."
+            if cap
+            else ""
+        )
+        cells.append(
+            (
+                "## Search and limits\n\n"
+                "The left panel is the Δχ² of a point companion over the grid, "
+                f"peaking at Δχ² = {search['delta_chi2']:.3g} "
+                f"({format_sigma(search['local_nsigma'])} local, "
+                f"{format_sigma(search['global_nsigma'])} after the "
+                f"look-elsewhere correction for {search['n_trials']:.0f} "
+                f"resolution elements).{capped} "
+                f"The right panel is the {limits['sigma']:g}σ contrast curve "
+                "(Absil method), the median limit in annuli about the star.",
+                "grid = res.grid()\n"
+                "fig, (left, right) = plt.subplots(1, 2, figsize=(13, 5))\n"
+                'plotting.plot_grid_map(grid["delta_chi2"], grid["axes"], '
+                'kind="loglike", label="Δχ²", title="Δχ²", ax=left)\n'
+                'plotting.plot_contrast_curve(grid["limit_flux"], grid["axes"], '
+                f"sigma={limits['sigma']!r}, r_max={search['max_sep_mas']!r}, "
+                f"bins={bins!r}, ax=right)\n"
+                "fig.tight_layout()",
+            )
+        )
     if "fit" in done:
-        cells.append(_binary_fit_cell(summary, "posterior" in done, has_data))
+        posterior = "posterior" in done
+        chi2 = summary["chi2"]
+        source = "posterior" if posterior else "fit"
+        samples = (
+            "samples = res.samples(group_by_chain=False)\n"
+            "step = max(1, samples[params[0]].size // 100)\n"
+            "draws = {p: samples[p][::step] for p in params}\n"
+            if posterior
+            else "draws = {p: [fit.values[p]] for p in params}\n"
+        )
+        if has_data:
+            code = (
+                "data = res.data()\nfit = res.fit_result()\n"
+                'params = list(res.summary["fit"]["params"])\n'
+                f"{samples}"
+                "pred = posterior_predictive_summary(draws, fit.model, data, params)\n"
+                f'fig = plotting.plot_data_model_correlation(data, {{"{source}": pred}})'
+            )
+        else:
+            code = 'display(Image("plots/fit_correlation.png"))'
+        cells.append(
+            (
+                "## Fit quality\n\n"
+                f"On the quoted errors, χ²/N = {chi2['companion_reduced']:.3g} for "
+                f"the best-fit binary and {chi2['null_reduced']:.3g} for the star "
+                f"alone, over N = {chi2['n_independent']} independent observables. "
+                "The correlation plot compares the model "
+                f"({source} predictive mean) with the data.",
+                code,
+            )
+        )
     if "posterior" in done:
         post = summary["posterior"]
         cells += [
@@ -211,69 +167,6 @@ def _binary_cells(run, summary, path):  # deliberate: dispatch-table callable
     return cells
 
 
-# deliberate: one notebook cell; the dispatcher lists them
-def _star_result_cell(summary, has_data):
-    fit, star = summary["fit"], summary["star"]
-    chi2 = ", ".join(
-        f"{k.replace('_', ' ')} {v:.3g}"
-        for k, v in summary["chi2"]["reduced"].items()
-    )
-    reach = summary.get("resolution")
-    reach = (
-        f" The longest baseline reaches {reach['first_null_fraction']:.3g} "
-        "of the first null."
-        if reach
-        else ""
-    )
-    lobes = _io.lobe_text(summary)
-    reach += f" Diameter lobes: {lobes}." if lobes else ""
-    names = list(fit["models"])
-    return (
-        "## Result\n\n"
-        "The squared visibilities against spatial frequency, with the "
-        "fitted model curves. On the quoted errors, χ²/N is "
-        f"{chi2}, over N = {summary['chi2']['n_independent']} "
-        "independent observables. The preferred model is "
-        f"`{fit['best']}`, with a diameter of {star['diam_mas']:.4g} "
-        f"mas (from the {star['source']}).{reach}",
-        "import virgil.pipeline.star as star\n\n"
-        "data = res.data()\n"
-        f"fitted = {{name: res.model(name) for name in {names!r}}}\n"
-        "fig = star.plot_v2_models(data, fitted)"
-        if has_data
-        else 'display(Image("plots/fit_v2.png"))',
-    )
-
-
-# deliberate: one notebook cell; the dispatcher lists them
-def _star_fit_cell(posterior, has_data):
-    source = "posterior" if posterior else "fit"
-    if posterior:
-        draws = (
-            'params = list(res.summary["posterior"]["sampled"])\n'
-            "samples = res.samples(group_by_chain=False)\n"
-            "step = max(1, samples[params[0]].size // 100)\n"
-            "draws = {p: samples[p][::step] for p in params}\n"
-        )
-    else:
-        draws = (
-            'params = [p for p in fit.values if not p.startswith("noise.")]\n'
-            "draws = {p: [fit.values[p]] for p in params}\n"
-        )
-    return (
-        "## Fit quality\n\n"
-        "The correlation plot compares the preferred model "
-        f"({source} predictive mean) with the data.",
-        "data = res.data()\n"
-        "fit = res.fit_result()\n"
-        f"{draws}"
-        "pred = posterior_predictive_summary(draws, fit.model, data, params)\n"
-        f'fig = plotting.plot_data_model_correlation(data, {{"{source}": pred}})'
-        if has_data
-        else 'display(Image("plots/fit_correlation.png"))',
-    )
-
-
 def _star_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
@@ -281,8 +174,66 @@ def _star_cells(run, summary, path):  # deliberate: dispatch-table callable
     if "overview" in done:
         cells.append(_data_cell(has_data))
     if "fit" in done:
-        cells.append(_star_result_cell(summary, has_data))
-        cells.append(_star_fit_cell("posterior" in done, has_data))
+        posterior = "posterior" in done
+        fit, star = summary["fit"], summary["star"]
+        chi2 = ", ".join(
+            f"{k.replace('_', ' ')} {v:.3g}"
+            for k, v in summary["chi2"]["reduced"].items()
+        )
+        reach = summary.get("resolution")
+        reach = (
+            f" The longest baseline reaches {reach['first_null_fraction']:.3g} "
+            "of the first null."
+            if reach
+            else ""
+        )
+        lobes = _io.lobe_text(summary)
+        reach += f" Diameter lobes: {lobes}." if lobes else ""
+        names = list(fit["models"])
+        cells.append(
+            (
+                "## Result\n\n"
+                "The squared visibilities against spatial frequency, with the "
+                "fitted model curves. On the quoted errors, χ²/N is "
+                f"{chi2}, over N = {summary['chi2']['n_independent']} "
+                "independent observables. The preferred model is "
+                f"`{fit['best']}`, with a diameter of {star['diam_mas']:.4g} "
+                f"mas (from the {star['source']}).{reach}",
+                "import virgil.pipeline.star as star\n\n"
+                "data = res.data()\n"
+                f"fitted = {{name: res.model(name) for name in {names!r}}}\n"
+                "fig = star.plot_v2_models(data, fitted)"
+                if has_data
+                else 'display(Image("plots/fit_v2.png"))',
+            )
+        )
+        source = "posterior" if posterior else "fit"
+        if posterior:
+            draws = (
+                'params = list(res.summary["posterior"]["sampled"])\n'
+                "samples = res.samples(group_by_chain=False)\n"
+                "step = max(1, samples[params[0]].size // 100)\n"
+                "draws = {p: samples[p][::step] for p in params}\n"
+            )
+        else:
+            draws = (
+                'params = [p for p in fit.values if not p.startswith("noise.")]\n'
+                "draws = {p: [fit.values[p]] for p in params}\n"
+            )
+        cells.append(
+            (
+                "## Fit quality\n\n"
+                "The correlation plot compares the preferred model "
+                f"({source} predictive mean) with the data.",
+                "data = res.data()\n"
+                "fit = res.fit_result()\n"
+                f"{draws}"
+                "pred = posterior_predictive_summary(draws, fit.model, data, params)\n"
+                f'fig = plotting.plot_data_model_correlation(data, {{"{source}": pred}})'
+                if has_data
+                else 'display(Image("plots/fit_correlation.png"))',
+            )
+        )
     if "posterior" in done:
         post = summary["posterior"]
         cells += [
@@ -520,8 +471,44 @@ def build_notebook(path):
     run = _io.read_json(path / "run.json")
     summary = _io.read_json(path / "summary.json")
     v4 = nbformat.v4
+    inputs = run["inputs"]
+    if inputs["files"]:
+        files = "\n".join(
+            f"- `{Path(f['path']).name}` (sha256 `{f['sha256'][:12]}…`)"
+            for f in inputs["files"]
+        )
+    else:
+        files = (
+            "- data passed in memory (observables sha256 "
+            f"`{inputs['data_sha256'][:12]}…`)"
+        )
+    stages = ", ".join(
+        f"`{name}` ({entry.get('seconds', 0):.1f} s)"
+        for name, entry in run["stages"].items()
+        if entry.get("status") == "complete"
+    )
+    settings = ", ".join(
+        f"`{k}={f'{v:.4g}' if isinstance(v, float) else v}`"
+        for k, v in run["config"].items()
+    )
+    prov = run["provenance"]
+    note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
+    intro = (
+        note + f"# Quicklook: {run['class']}\n\n"
+        f"This notebook was written by the virgil `{run['pipeline']}` pipeline "
+        f"({run['stability']}, schema `{run['schema']}`) and fitted a "
+        f"`{run['model']['class']}` template.\n\n"
+        f"Inputs:\n\n{files}\n\n"
+        f"Stages run: {stages or 'none'}.\n\n"
+        f"Settings: {settings}.\n\n"
+        f"Versions: virgil {prov['virgil']}, JAX {prov['jax']}, numpyro "
+        f"{prov['numpyro']}, on {prov['backend']} (x64 "
+        f"{'on' if prov['x64'] else 'off'}).\n\n"
+        "The first cell reloads the run from this folder, without recomputing "
+        "anything, and prints its key numbers."
+    )
     cells = [
-        v4.new_markdown_cell(_intro(run)),
+        v4.new_markdown_cell(intro),
         v4.new_code_cell(
             "import warnings\n\n"
             "%matplotlib inline\n"

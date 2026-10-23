@@ -1311,7 +1311,7 @@ def _prune(p, shape, fit):  # deliberate: test seam: ring pruning
     return fit, shape, dropped
 
 
-# deliberate: named stage: the rings profile of the model registry
+# deliberate: callback: the profile stage of the "rings" entry of MODELS
 def _profile_rings(p):
     s, ctx, data = p.settings, p._ctx(), p.processed
     n_data = int(data.n_independent)
@@ -1666,7 +1666,7 @@ def _edge_side(candidates):
     return None
 
 
-# deliberate: named stage: the GP profile of the model registry
+# deliberate: callback: the profile stage of the "GP" entry of MODELS
 def _profile_gp(p):
     from ..imaging import error_scale
 
@@ -1736,25 +1736,6 @@ def _compare(p):
     return models()[p.name].compare(p)
 
 
-# deliberate: named step: the quadrature-weighted light fraction
-def _light_fraction(model, lo, hi):
-    """Fraction of the disks' light (at the reference wavelength) in [lo, hi]."""
-    from ..models import MultipoleDisk
-
-    num = den = 0.0
-    for part in model.components.values():
-        if not isinstance(part, MultipoleDisk):
-            continue
-        r, w = (onp.asarray(x, dtype=float) for x in part.profile.quadrature())
-        flux = float(onp.asarray(part._weight()))
-        total = float(w.sum())
-        if total <= 0:
-            continue
-        num += flux * float(w[(r >= lo) & (r <= hi)].sum()) / total
-        den += flux
-    return num / den if den > 0 else float("nan")
-
-
 def _residual_search(p, model):
     """The point-source search on ``model``'s residuals, as a check."""
     search = _point_source_search(
@@ -1771,12 +1752,26 @@ def _residual_search(p, model):
 
 def _common_compare(p, model, chi2, extra):
     """Numbers every ``compare`` reports, for the preferred model."""
+    from ..models import MultipoleDisk
+
     ctx, data = p._ctx(), p.processed
     n = int(data.n_independent)
     factor = p._rescale_factor()
     rescaled = p.error_mode == "rescale"
     # the fitted parameters of models/best within 0.1% of a prior bound
     best = _io.read_json(p.output / "models" / "best" / "info.json")
+    # the fraction of the disks' light (at the reference wavelength) beyond r_out - halffringe
+    num = den = 0.0
+    for part in model.components.values():
+        if not isinstance(part, MultipoleDisk):
+            continue
+        r, w = (onp.asarray(x, dtype=float) for x in part.profile.quadrature())
+        flux = float(onp.asarray(part._weight()))
+        total = float(w.sum())
+        if total <= 0:
+            continue
+        num += flux * float(w[r >= ctx.r_out - ctx.halffringe].sum()) / total
+        den += flux
     return {
         "n_independent": n,
         "chi2": chi2,
@@ -1785,9 +1780,7 @@ def _common_compare(p, model, chi2, extra):
         "error_scale_factor": factor if rescaled else None,
         "at_bound": list(best.get("at_bound") or []),
         "degree": ctx.degree,
-        "outer_fraction": _light_fraction(
-            model, ctx.r_out - ctx.halffringe, onp.inf
-        ),
+        "outer_fraction": num / den if den > 0 else float("nan"),
         **extra,
     }
 
@@ -1812,7 +1805,7 @@ def _save_best(p, name):
     return values, model
 
 
-# deliberate: named stage: the rings compare of the model registry
+# deliberate: callback: the compare stage of the "rings" entry of MODELS
 def _compare_rings(p):
     from ..likelihood import whitened_residuals
 
@@ -1906,41 +1899,6 @@ def _compare_rings(p):
     return report
 
 
-# deliberate: named step: autodiff of a fraction and its flux correlation
-def _inner_stats(model, data, ctx):
-    """The disk's light fraction within a half-fringe of ``r_in`` and its flux correlation."""
-    import jax
-    import jax.numpy as np
-
-    from ..likelihood import whitened_residuals
-
-    z0 = np.asarray(model.get("disk.profile.z"))
-    flux0 = np.asarray(model.get("disk.flux"))
-
-    def build(x):
-        return model.set(["disk.flux", "disk.profile.z"], [x[0], x[1:]])
-
-    def residuals(x):
-        return whitened_residuals(build(x), data)
-
-    def fraction(x):
-        r, w = build(x).disk.profile.quadrature()
-        return np.sum(
-            np.where(r <= ctx.r_in + ctx.halffringe, w, 0.0)
-        ) / np.sum(w)
-
-    x0 = np.concatenate([flux0.reshape(1), z0])
-    jac = onp.asarray(jax.jacfwd(residuals)(x0), dtype=float)
-    prior = onp.diag(onp.r_[1e-9, onp.ones(z0.size)])
-    cov = onp.linalg.inv(jac.T @ jac + prior)
-    grad = onp.asarray(jax.grad(fraction)(x0), dtype=float)
-    value = float(fraction(x0))
-    var_flux, var_frac = cov[0, 0], float(grad @ cov @ grad)
-    cross = float(cov[0] @ grad)
-    denom = math.sqrt(max(var_flux, 0.0) * max(var_frac, 0.0))
-    return value, (cross / denom if denom > 0 else None)
-
-
 # deliberate: test seam: evidence spread and profile correlation
 def _stability(p, rows):
     """The evidence spread across ℓ and the smallest correlation between
@@ -2007,15 +1965,46 @@ def _render_stats(p, model):  # deliberate: test seam: the render check
     return out
 
 
-# deliberate: named stage: the GP compare of the model registry
+# deliberate: callback: the compare stage of the "GP" entry of MODELS
 def _compare_gp(p):
+    import jax
+    import jax.numpy as np
+
+    from ..likelihood import whitened_residuals
+
     ctx, data = p._ctx(), p.processed
     # The evidences were computed with the fits, on the data they used.
     rows = [dict(c) for c in p._report("profile")["candidates"]]
     scored = [r for r in rows if r["log_evidence"] is not None]
     best = max(scored or rows, key=lambda r: r["log_evidence"] or -onp.inf)
     values, model = _save_best(p, best["name"])
-    inner_fraction, inner_corr = _inner_stats(model, data, ctx)
+    # the disk's light fraction within a half-fringe of ``r_in`` and its flux correlation
+    z0 = np.asarray(model.get("disk.profile.z"))
+    flux0 = np.asarray(model.get("disk.flux"))
+
+    def build(x):
+        return model.set(["disk.flux", "disk.profile.z"], [x[0], x[1:]])
+
+    def residuals(x):
+        return whitened_residuals(build(x), data)
+
+    def fraction(x):
+        r, w = build(x).disk.profile.quadrature()
+        return np.sum(
+            np.where(r <= ctx.r_in + ctx.halffringe, w, 0.0)
+        ) / np.sum(w)
+
+    x0 = np.concatenate([flux0.reshape(1), z0])
+    jac = onp.asarray(jax.jacfwd(residuals)(x0), dtype=float)
+    prior = onp.diag(onp.r_[1e-9, onp.ones(z0.size)])
+    cov = onp.linalg.inv(jac.T @ jac + prior)
+    grad = onp.asarray(jax.grad(fraction)(x0), dtype=float)
+    value = float(fraction(x0))
+    var_flux, var_frac = cov[0, 0], float(grad @ cov @ grad)
+    cross = float(cov[0] @ grad)
+    denom = math.sqrt(max(var_flux, 0.0) * max(var_frac, 0.0))
+    inner_fraction = value
+    inner_corr = cross / denom if denom > 0 else None
     spread, stability = _stability(p, rows)
     rendered = _render_stats(p, model)
     geometry = p._report("geometry")
@@ -2224,54 +2213,6 @@ def _best_row(compare):
     return next(r for r in compare["rows"] if r["name"] == compare["best"])
 
 
-# deliberate: named step: the posterior model and priors
-def _posterior_setup(p):
-    """Model, priors, start, position-angle site and parity of the NUTS run."""
-    ctx = p._ctx()
-    compare = p._report("compare")
-    values = _io.load_model_values(p.output / "models" / "best")
-    row = _best_row(compare)
-    if p.name == "rings":
-        shape = _Shape(row["n"], ctx.colour, ctx.degree, row["planet"])
-        priors = _ring_priors(ctx, shape)
-        start = {k: onp.asarray(values[k]) for k in priors}
-        start["pa_vec"] = onp.asarray(values["pa_vec"])
-        parity = {
-            f"h{i}_{part}{j}": (-1.0) ** j
-            for i in range(1, shape.n + 1)
-            for j in range(1, ctx.degree + 1)
-            for part in ("re", "im")
-        }
-        return (
-            _builder(ctx, shape),
-            priors,
-            start,
-            "pa",
-            parity,
-            float(values["pa"]),
-        )
-    geo = _released_geometry(p, values)
-    planet = _planet_values(values, ctx.colour) if row["planet"] else None
-    template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)
-    model = _apply(template, values, priors)
-    # NUTS runs on the unfrozen model: the geometry is released here
-    priors = {
-        **priors,
-        **{f"disk.{k}": v for k, v in _geometry_priors(ctx).items()},
-    }
-    start = {k: onp.asarray(values[k]) for k in priors if k in values}
-    angle = math.radians(float(geo["pa"]))
-    start["disk.inc"] = onp.asarray(max(float(geo["inc"]), 5.0))
-    start["disk.pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
-    orders = onp.arange(1, ctx.degree + 1, dtype=float)
-    parity = (
-        {"disk.harmonics.z": ((-1.0) ** orders)[None, :, None]}
-        if ctx.degree
-        else {}
-    )
-    return model, priors, start, "disk.pa", parity, float(geo["pa"])
-
-
 @in_float64
 def _nuts(p, model, priors, start):
     from ..likelihood import numpyro_model
@@ -2290,7 +2231,48 @@ def _posterior(p):
     if not s["posterior"]:
         (p.output / "samples.h5").unlink(missing_ok=True)
         return {"skipped": True, "reason": "posterior=False"}
-    model, priors, start, pa_site, parity, centre = _posterior_setup(p)
+    # the model, priors and start of the NUTS run, its position-angle site and parity
+    ctx = p._ctx()
+    compare = p._report("compare")
+    values = _io.load_model_values(p.output / "models" / "best")
+    row = _best_row(compare)
+    if p.name == "rings":
+        shape = _Shape(row["n"], ctx.colour, ctx.degree, row["planet"])
+        priors = _ring_priors(ctx, shape)
+        start = {k: onp.asarray(values[k]) for k in priors}
+        start["pa_vec"] = onp.asarray(values["pa_vec"])
+        parity = {
+            f"h{i}_{part}{j}": (-1.0) ** j
+            for i in range(1, shape.n + 1)
+            for j in range(1, ctx.degree + 1)
+            for part in ("re", "im")
+        }
+        model, pa_site, centre = (
+            _builder(ctx, shape),
+            "pa",
+            float(values["pa"]),
+        )
+    else:
+        geo = _released_geometry(p, values)
+        planet = _planet_values(values, ctx.colour) if row["planet"] else None
+        template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)
+        model = _apply(template, values, priors)
+        # NUTS runs on the unfrozen model: the geometry is released here
+        priors = {
+            **priors,
+            **{f"disk.{k}": v for k, v in _geometry_priors(ctx).items()},
+        }
+        start = {k: onp.asarray(values[k]) for k in priors if k in values}
+        angle = math.radians(float(geo["pa"]))
+        start["disk.inc"] = onp.asarray(max(float(geo["inc"]), 5.0))
+        start["disk.pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
+        orders = onp.arange(1, ctx.degree + 1, dtype=float)
+        parity = (
+            {"disk.harmonics.z": ((-1.0) ** orders)[None, :, None]}
+            if ctx.degree
+            else {}
+        )
+        pa_site, centre = "disk.pa", float(geo["pa"])
     samples, stats = _nuts(p, model, priors, start)
     samples = _fold_pa(
         samples,
@@ -2377,31 +2359,6 @@ _POSTERIOR_KEYS = (
     "ess_bulk_min",
     "divergence_fraction",
 )
-
-
-# deliberate: named step: the summary section of the disk
-def _disk_section(name, compare):
-    section = {"model": name, "best": compare["best"]}
-    if name == "rings":
-        row = _best_row(compare)
-        section.update(
-            n_rings=compare["n_best"],
-            rings=[
-                {"r_mas": r, "sigma_mas": w, "flux": f}
-                for r, w, f in zip(row["radii"], row["widths"], row["fluxes"])
-            ],
-        )
-    else:
-        section.update(
-            ell_mas=compare["ell_mas"],
-            flux=compare["flux"],
-            on_grid_edge=compare["grid"]["on_grid_edge"],
-            grid_extended=compare["grid"]["extended"],
-        )
-    section["inc_deg"] = compare["inc_deg"]
-    section["pa_deg"] = compare["pa_deg"]
-    section["companion"] = compare["companion"]
-    return section
 
 
 def _chi2_checks(entry, compare):
@@ -2519,7 +2476,27 @@ def _summarize(name, settings, reports):
         "residual_search": comp["residual_search"],
         "raised_search": comp["raised_search"],
     }
-    sections["disk"] = _disk_section(name, comp)
+    disk = {"model": name, "best": comp["best"]}
+    if name == "rings":
+        row = _best_row(comp)
+        disk.update(
+            n_rings=comp["n_best"],
+            rings=[
+                {"r_mas": r, "sigma_mas": w, "flux": f}
+                for r, w, f in zip(row["radii"], row["widths"], row["fluxes"])
+            ],
+        )
+    else:
+        disk.update(
+            ell_mas=comp["ell_mas"],
+            flux=comp["flux"],
+            on_grid_edge=comp["grid"]["on_grid_edge"],
+            grid_extended=comp["grid"]["extended"],
+        )
+    disk["inc_deg"] = comp["inc_deg"]
+    disk["pa_deg"] = comp["pa_deg"]
+    disk["companion"] = comp["companion"]
+    sections["disk"] = disk
     checks += _chi2_checks(entry, comp)
     checks += _fit_checks(entry, settings, over, geo, comp)
     if post and not post.get("skipped"):
