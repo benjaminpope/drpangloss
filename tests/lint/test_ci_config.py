@@ -94,6 +94,7 @@ def test_changed_flags():
         "src/virgil/orbits.py",
         "tests/test_epochs.py",
         "src/virgil/arcs.py",
+        "src/virgil/tempering.py",
         "src/virgil/pipeline/orbit.py",
         "tests/test_arcs.py",
         "tests/test_tempering.py",
