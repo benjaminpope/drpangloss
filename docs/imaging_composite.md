@@ -96,7 +96,7 @@ print(f"one star: converged {single_fit.info['converged']}, chi2 per point {sing
 one star: converged True, chi2 per point 0.938, image flux 0.443 (ring truth 0.35)
 ```
 
-Draws from the prior alone: the ring template broken into knots and gaps about 1.5 mas across, which the data must confirm or erase. Below, cuts through 300 draws, one in bold.
+Draws from the prior alone: the ring template broken into knots and gaps about 1.5 mas across, which the data must confirm or erase. Below, cuts through 100 draws, one in bold.
 
 ```python
 from virgil.plotting import plot_field_draws
