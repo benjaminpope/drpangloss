@@ -1460,3 +1460,14 @@ note = "Springer textbook, section 3.5 (evidence approximation for regularizatio
 role = "context"
 verified = false
 verified_via = "none"
+
+[ref.born1999]
+authors = "Born & Wolf"
+year = 1999
+title = "Principles of Optics, 7th edition"
+used_in = ["virgil.fields:MultipoleField"]
+note = "section 9.2: Zernike radial polynomials, R_n^m(r) ~ r^|m|, the regularity of a smooth field at the origin"
+role = "context"
+doi = "10.1017/CBO9781139644181"
+verified = true
+verified_via = "crossref"
