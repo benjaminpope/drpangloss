@@ -79,9 +79,12 @@ def test_covariance_is_the_radial_matern_times_the_multipolekernel_spectrum(
     d = onp.abs(r[:, None] - r[None]) / ell_r
     k_r = onp.exp(-0.5 * d * d) if onp.isinf(nu) else _matern(d, 1.0, nu)
     expected = sigma**2 * onp.kron(k_r, _azimuthal_covariance(N_T, ell_t, nu))
-    assert onp.allclose(jac @ jac.T, expected, atol=2e-5 * sigma**2)
+    # Beyond five node spacings the origin taper is 1 (to 1e-4 per order, 6e-4 summed).
+    far = onp.arange(N_R * N_T) >= 5 * N_T
+    cov = (jac @ jac.T)[far][:, far]
+    assert onp.allclose(cov, expected[far][:, far], atol=2e-3 * sigma**2)
     # sigma is the standard deviation of the field.
-    assert onp.mean(onp.diag(jac @ jac.T)) == pytest.approx(sigma**2, rel=1e-4)
+    assert onp.mean(onp.diag(cov)) == pytest.approx(sigma**2, rel=1e-3)
 
 
 @pytest.mark.parametrize("nu_theta", [0.5, 1.5, onp.inf])
@@ -765,3 +768,19 @@ def test_the_multipole_kernel_spectrum_is_finite_for_a_long_angle():
         )
         spectrum = onp.asarray(kernel.spectrum(4))
         assert onp.all(onp.isfinite(spectrum)) and spectrum[0] == 1.0
+
+
+def test_the_field_is_single_valued_at_the_centre_and_stationary_away_from_it():
+    n_r, n_theta = 12, 16
+    z = onp.random.default_rng(0).normal(size=(600, n_r, n_theta))
+    kw = dict(image_shape=(8, 8), r_max_mas=11.0, r_min_mas=0.0, sigma=2.0)
+    vals = onp.stack(
+        [onp.asarray(MultipoleField(zi, **kw).polar_values()) for zi in z]
+    )
+    # r = 0: no azimuthal variation.
+    assert onp.abs(vals[:, 0, :] - vals[:, 0, :1]).max() < 1e-5
+    # Per-order variance: gone at node 0 for m >= 1, unchanged five spacings
+    # out (node 8 against the outermost node, same radial correlation).
+    var = (onp.abs(onp.fft.fft(vals, axis=2)) ** 2).mean(axis=0) / n_theta
+    assert var[0, 3] < 1e-8
+    assert abs(var[8, 3] / var[11, 3] - 1.0) < 0.3
