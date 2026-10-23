@@ -723,7 +723,7 @@ def fit(
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. A maximum-entropy pixel's curvature is its
-        metric ``weight * b * (1 - b)``; float32 can stall at weak weights, so use float64
+        metric ``weight * b * (1 - b)`` (unsmoothed pixels); float32 can stall at weak weights, so use float64
         there.
         Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
         [Hutchinson (1989)](../references.md#hutchinson1989).
@@ -1645,7 +1645,7 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b * (1 - b)`` (the softmax's):
+    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b * (1 - b)`` (the softmax's, unsmoothed pixels):
     the data JᵀJ and the other terms are dropped there (measured faster than
     adding them), so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see

@@ -1576,8 +1576,8 @@ year = 1985
 title = "A simple maximum entropy deconvolution algorithm"
 bibcode = "1985A&A...143...77C"
 used_in = ["virgil.fitting:gauss_newton_diag"]
-note = "A&A 143, 77; the entropy metric as the natural preconditioner in MEM. No DOI or arXiv ID: checked on ADS only"
-verified = false
+note = "A&A 143, 77; the entropy metric as the natural preconditioner in MEM. No DOI or arXiv ID: checked on ADS"
+verified = true
 verified_via = "ads"
 
 [ref.martens2010]

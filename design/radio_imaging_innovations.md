@@ -330,8 +330,8 @@ marked *(unverified)*. Corrections are listed at the end.
 Closed on 2026-10-23 (virgil#531): Zawadzki et al. 2023, Cornwell & Wilkinson 1981, Cornwell & Evans 1985,
 Martens 2010, Schraudolph 2002 and Pawitan 2001 are in `references/provenance.toml`, with `Source:` lines in
 `virgil.radio` and `virgil.fitting.gauss_newton_diag`; Barnett et al. 2019, Hutchinson 1989 and Bekas et al. 2007
-were already there. Martens 2010 and Cornwell & Evans 1985 have no DOI or arXiv ID, so they stay
-`verified = false` (Cornwell & Evans is checked on ADS, Martens in the ICML PDF; neither has a Crossref record).
+were already there. Cornwell & Evans 1985 has no DOI or arXiv ID and is `verified` on its ADS record, as Skilling & Bryan is;
+Martens 2010 is not on ADS, has no DOI, and stays `verified = false` (title and author read in the ICML PDF).
 The other references of B1–B8 that no code cites (for example Chael 2016, Hudson & Larkin 1994, Readhead &
 Wilkinson 1978) are in the prose only and need entries when code cites them.
 
