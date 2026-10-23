@@ -2083,13 +2083,12 @@ def plot_field_draws(
         ylabel = "log-brightness η"
     if cuts == "multipole" and isinstance(field, MultipoleDisk):
         r, tracks = _disk_tracks(field, latents, mmax)
-        off = 0.0
-        prev = None
+        bottom = None
         for m, y in enumerate(tracks):
-            y = y - y.mean()
-            half = 1.1 * max(float(onp.abs(y).max()), 1e-12)
-            off -= half if prev is None else prev + half
-            prev = half
+            hi, lo = max(float(y.max()), 0.0), min(float(y.min()), 0.0)
+            gap = 0.1 * (hi - lo) + 1e-12
+            off = -hi if bottom is None else bottom - gap - hi
+            bottom = off + lo
             _draw_cuts(d, [((r, y + off), f"C{m}", None)], nfaint)
             d.axhline(off, color="k", lw=0.4)
             d.text(

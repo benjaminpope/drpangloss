@@ -209,3 +209,24 @@ def test_disk_rejects_bad_input():
         plot_field_draws(
             _disk(), 1.0, latents=jax.random.normal(KEY, (4, 12)), npix=24
         )
+
+
+def test_disk_tracks_keep_their_zero():
+    """With z = 0, ln I0 - mu is 0 and a fixed c_1 = 0.3 sits 0.3 above its zero."""
+    disk = MultipoleDisk(
+        RadialGP(2.0, 10.0, sigma=1.0, ell=3.0),
+        harmonics=Harmonics(c=0.3, form="linear"),
+        inc=40.0,
+        n_r=12,
+    )
+    z = np.zeros((3, 12))
+    fig, ax = plot_field_draws(
+        disk, 1.0, latents={"profile.z": z}, npix=16, n_cuts=1
+    )
+    lines = ax[
+        "d"
+    ].get_lines()  # per track: one faint, the bold, the zero line
+    for k, expect in enumerate((0.0, 0.3)):
+        bold, zero = lines[3 * k + 1], lines[3 * k + 2]
+        gap = onp.asarray(bold.get_ydata()) - zero.get_ydata()[0]
+        onp.testing.assert_allclose(gap, expect, atol=1e-5)
