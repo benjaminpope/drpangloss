@@ -5,6 +5,17 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Fixed
+
+- `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
+  added to it changes no image, and LM's QR solve drifted along that direction
+  by rounding noise (to 4e5 or 3.6e10, depending on platform), as did a dark
+  pixel (to -2e3 or below). The fitted `log_brightness` is now `log` of the
+  pixel fluxes (`Σ exp = 1`), none below -72 (float64), the same on every
+  platform; images, χ² and penalties are unchanged to rounding.
+
 ## 0.4.1 (2026-10-23)
 
 0.4.1 is a consolidation release. It adds no new model families. It makes the

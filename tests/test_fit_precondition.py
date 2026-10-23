@@ -198,9 +198,10 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     onp.testing.assert_allclose(
         scaled.model.env.brightness, plain.model.env.brightness, atol=1e-2
     )
-    # The softmax gauge does not drift: the mean log-brightness stays at its start.
-    mean = float(np.mean(scaled.values["env.log_brightness"]))
-    assert abs(mean) < 1e-6
+    # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
+    x = scaled.values["env.log_brightness"]
+    assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-5)
+    assert float(np.max(np.abs(x))) < 1e3
 
 
 def test_lm_ignores_the_option_and_bad_values_are_rejected():
@@ -297,6 +298,96 @@ def test_probes_are_redrawn_each_round_and_a_new_round_does_not_recompile():
             True,
         )
     assert _lbfgs_run._cached._cache_size() - before <= 1
+
+
+def _gauge_problem(npix=8):
+    """An image-only scene whose TSV optimum has dark pixels (an l_curve point)."""
+    truth = Image.from_brightness(
+        gaussian_blob(npix, 12.0, 25.0, dra=20.0)
+        + 0.3 * gaussian_blob(npix, 12.0, 3.0, dra=-30.0),
+        12.0,
+    )
+    data = OIData(ami_grid_record(pitch_m=0.5)).with_model(
+        truth, key=jax.random.PRNGKey(1)
+    )
+    start = Image(np.zeros((npix, npix)), 12.0)
+    return start, image_priors(start), data
+
+
+def test_recentring_changes_no_loss_and_fixes_the_log_flux():
+    from virgil.fitting import _gauge_floor, _recentre
+
+    start, priors, data = _gauge_problem()
+    key = "log_brightness"
+    x = onp.random.default_rng(0).normal(size=(8, 8))
+    x[0, :3] = -500.0  # dark pixels
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+        )
+        z = {key: np.asarray(x + 1e5)}
+        out = _recentre(problem, z)[key]
+        assert float(jax.nn.logsumexp(out)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.max(out) - np.min(out)) == pytest.approx(
+            _gauge_floor(out)
+        )
+        assert float(problem.loss({key: out})) == pytest.approx(
+            float(problem.loss(z)), rel=1e-12
+        )
+        # A pixel at -inf (no flux) is allowed and is raised to the floor.
+        x[3, 3] = -onp.inf
+        out = _recentre(problem, {key: np.asarray(x)})[key]
+        assert float(np.max(out) - np.min(out)) == pytest.approx(
+            _gauge_floor(out)
+        )
+        assert bool(np.all(np.isfinite(out)))
+
+
+@pytest.mark.parametrize(
+    "method, precondition",
+    [("lm", None), ("lbfgs", None), ("lbfgs", "diag"), ("adam", "diag")],
+)
+def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
+    method, precondition
+):
+    # LM took |x| ~ 5e3 here (a shift and dark pixels set by rounding); a start
+    # shifted by 1e5 must give the same fit as an unshifted one.
+    start, priors, data = _gauge_problem()
+    options = dict(
+        method=method,
+        precondition=precondition,
+        max_steps=300 if method != "lm" else None,
+    )
+    warm = None
+    for weight in (1e3, 3e2, 1e2):
+        result = fit(start, priors, data, [TSV(weight)], init=warm, **options)
+        x = onp.asarray(result.values["log_brightness"])
+        assert onp.abs(x).max() < 1e3
+        assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-9)
+        onp.testing.assert_allclose(
+            result.model.brightness,
+            jax.nn.softmax(x.ravel()).reshape(x.shape),
+            atol=1e-12,
+        )
+        warm = result.values
+    if method != "lm":  # the others stop unconverged, and may amplify 1e-11
+        return
+    base = onp.asarray(result.values["log_brightness"], float)
+    runs = [
+        fit(
+            start,
+            priors,
+            data,
+            [TSV(1e2)],
+            init={"log_brightness": b},
+            **options,
+        )
+        for b in (base, base + 1e5)
+    ]
+    assert runs[1].info["loss"] == pytest.approx(
+        runs[0].info["loss"], rel=1e-6
+    )
+    assert onp.abs(onp.asarray(runs[1].values["log_brightness"])).max() < 1e3
 
 
 def _l_curve_steps(dtype, npix=41):

@@ -357,6 +357,20 @@ move along it by a lot without changing the loss, drifting the coordinates.
 Project out the mean of the step (or of `z̃`) every iteration, or fit the flux
 as a separate site.
 
+*Implemented for every method (`fitting._recentre`).* The step projection above
+keeps L-BFGS and Adam off the direction, but LM's QR solve steps along it by
+rounding noise (the l_curve of virgil-validation, 8 × 8, TSV: |x| reached 4e5
+on jax 0.12 and 3.6e10 on 0.11, by platform), as it does along a dark pixel,
+whose step grows as 1/flux. So the loss is seen through two gauges. LM is
+given the pixels floored at `-2 log(1/eps)` below the brightest (72 in
+float64), where the flux is below rounding, and one extra residual, `log Σ exp x`,
+which makes the constant direction well conditioned (the data's Jacobian does
+not see it; the row is zero at the gauge, so the loss and stopping test do not
+see it). And `fit` recentres the start, each LM chunk and the result to
+`x = log(flux)`, `Σ exp x = 1`, the standard normalization of log-probabilities,
+which is finite where a mean or maximum is not (a `-inf` pixel is raised to the floor).
+No loss, image or χ² changes beyond rounding; only the reported `log_brightness`.
+
 (e) **`GaussianField` latents are already prior-whitened** (standard-normal
 `η`; LM converges in 20–50 steps, per Stage 7), so B matters mostly for plain
 `ImproperUniform` log-brightness with an entropy or TV regularizer. Do not add
