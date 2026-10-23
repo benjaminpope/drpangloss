@@ -1915,10 +1915,9 @@ def plot_field_draws(
         cosine amplitudes ``a_m(r)``, ``m = 0..mmax``, of
         ``η = Σ a_m cos mθ + b_m sin mθ`` (FFT of
         ``MultipoleField.polar_values`` along θ, the residual without ``mean``;
-        ``a_0`` is the azimuthal mean) against
-        disk-plane radius, one offset track per ``m``. Default
-        ``"multipole"`` for a MultipoleField, ``"principal"`` for a
-        GaussianField, ``"axes"`` for images.
+        ``a_0`` is the azimuthal mean) against disk-plane radius, one offset
+        track per ``m``. Default: ``"multipole"`` for a MultipoleField,
+        ``"principal"`` for a GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
         ``(PA in degrees North through East, label)`` per ``"axes"`` cut.
     truth : array-like, shape (nrow, ncol), optional
@@ -1930,11 +1929,9 @@ def plot_field_draws(
         with confidence can have a per-pixel S/N near one.
     beam : Beam, optional
         Drawn on the map panels, as in [`plot_model`][virgil.plotting.plot_model].
-    snr_scale : {"linear", "log"}, optional
-        Colour scale of the S/N map (default linear).
-    snr_vmax, n_cuts, title, figsize : optional
-        Top of the S/N scale (default its 99th percentile); number of faint
-        cuts (100); figure title and size.
+    snr_scale, snr_vmax, n_cuts, title, figsize : optional
+        S/N colour scale (``"linear"`` or ``"log"``) and its top (default the
+        99th percentile); number of faint cuts (100); title and size.
 
     Returns
     -------
