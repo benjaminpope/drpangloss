@@ -2,8 +2,9 @@
 
 Usage: ``python scripts/code_shape_metrics.py OLD_DIR NEW_DIR [OLD_LABEL NEW_LABEL]``
 (each directory holds ``.py`` files, e.g. ``src/virgil``). Prints, per tree:
-single-use private defs (private names referenced at most once besides the
-def), docstrings in the 25-40 line band, over 60 lines, and mean docstring
+private defs whose name occurs at most once besides the def (a raw regex
+count over the text, comments and docstrings included, pooled by bare name;
+not the gate's rule, which is ``code_shape.py --since``), docstrings in the 25-40 line band, over 60 lines, and mean docstring
 length. Reads only.
 """
 
@@ -40,12 +41,19 @@ def stats(root):
             ):
                 private.append(n.name)
     return dict(
-        single_use=sum(uses[n] <= 2 for n in private),
+        raw_single_ref=sum(uses[n] <= 2 for n in private),
         private_defs=len(private),
         docstrings_25_40=sum(25 <= k <= 40 for k in docs),
         docstrings_over_60=sum(k > 60 for k in docs),
         mean_docstring_lines=round(sum(docs) / max(1, len(docs)), 2),
     )
+
+
+LABELS = dict(
+    raw_single_ref="private defs referenced once (raw text count, not the gate)",
+    docstrings_25_40="docstrings of 25-40 lines",
+    docstrings_over_60="docstrings over 60 lines",
+)
 
 
 def main(argv):
@@ -54,7 +62,7 @@ def main(argv):
     a, b = stats(old), stats(new)
     print(f"| metric | {labels[0]} | {labels[1]} |\n|---|---:|---:|")
     for k in a:
-        print(f"| {k.replace('_', ' ')} | {a[k]} | {b[k]} |")
+        print(f"| {LABELS.get(k, k.replace('_', ' '))} | {a[k]} | {b[k]} |")
 
 
 if __name__ == "__main__":
