@@ -68,7 +68,7 @@ _AT_BOUND = 0.01
 _BAND_ROWS = 10
 
 
-def _engine_defaults(*names):
+def _engine_defaults(*names):  # deliberate: test seam (tests import it)
     """The defaults of ``fit_orbit_aliases`` for ``names``: the search
     effort lives there only."""
     from ..aliases import fit_orbit_aliases
@@ -94,16 +94,14 @@ class OrbitPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The data are expected to be prepared already (the instrument's channel,
-    band and noise handling). Stages: ``load`` (group into nights), ``epochs``
-    ([`epoch_positions`][virgil.epochs.epoch_positions] per night), ``search``
-    ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] with no published
-    period, window or prior), ``modes`` (rank the alias bands; compare with a
-    single star), ``posterior`` (NUTS in each significant band) and
-    ``quicklook``. ``run()`` returns a ``Result``: ``summary["modes"]["winner"]``
-    is the winning alias band and ``summary["modes"]["delta_log_z"]`` its
-    margin over the runner-up in nats. All settings, with defaults:
-    [pipeline settings](../pipeline.md#orbitpipeline-settings).
+    The data must be prepared already (the instrument's channel, band and
+    noise handling). Stages: ``load`` (group into nights), ``epochs``
+    ([`epoch_positions`][virgil.epochs.epoch_positions]), ``search``
+    ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases], blind),
+    ``modes`` (rank the bands; compare with a single star), ``posterior``
+    (NUTS per significant band) and ``quicklook``. ``summary["modes"]["winner"]``
+    is the winning alias band, ``["delta_log_z"]`` its margin (nats) over the
+    runner-up. All settings: [pipeline settings](../pipeline.md#orbitpipeline-settings).
 
     Parameters
     ----------
@@ -174,6 +172,8 @@ class OrbitPipeline(_Pipeline):
 
     @keyword_only("output")
     def __init__(self, epochs, *, output="run", **settings):
+        from ..epochs import Epochs
+
         notes = getattr(self, "_notes", {})
         super().__init__(_as_mapping(epochs), None, output=output, **settings)
         mapping, times = self.data
@@ -181,7 +181,13 @@ class OrbitPipeline(_Pipeline):
             mapping, self.settings["exclude"], notes
         )
         self._notes = notes
-        self.data = _build_epochs(mapping, times)
+        names = {name for group in mapping.values() for name in group}
+        keep = {
+            k: float(v)
+            for k, v in times.items()
+            if v is not None and k in names
+        }  # times: {dataset: MJD}, None to use the data's own
+        self.data = Epochs(mapping, times=keep or None)
         if len(self.data.names) < 2 or len(self.data.data) < 2:
             raise ValueError(
                 "An orbit needs at least two nights; got "
@@ -312,7 +318,12 @@ class OrbitPipeline(_Pipeline):
     def _input_files(self):
         files = super()._input_files()
         for entry in files:
-            note = self._notes.get(_resolved(self._notes, entry["path"]), {})
+            key = entry["path"]
+            for k in self._notes:  # as given or resolved
+                if str(Path(k).resolve()) == key:
+                    key = k
+                    break
+            note = self._notes.get(key, {})
             entry.update(
                 {k: v for k, v in note.items() if k != "path"},
             )
@@ -356,21 +367,13 @@ class OrbitPipeline(_Pipeline):
 # === INPUTS ===
 
 
-def _resolved(notes, path):
-    """The key of ``notes`` for the file ``path`` (as given or resolved)."""
-    for key in notes:
-        if str(Path(key).resolve()) == path:
-            return key
-    return path
-
-
 def _names_file(key, path):
     """Whether ``key`` names the file ``path``: as given, resolved or by
     file name."""
     return key in (path, str(Path(path).resolve()), Path(path).name)
 
 
-def _as_mapping(epochs):
+def _as_mapping(epochs):  # deliberate: named step
     """``(mapping, times)`` of whatever the user gave: ``{night: {dataset:
     OIData}}`` and ``{dataset: MJD or None}``."""
     from ..epochs import Epochs
@@ -417,48 +420,31 @@ def _named(night, datasets):
     return {f"{night}[{k}]": d for k, d in enumerate(datasets)}
 
 
-def _build_epochs(mapping, times):
-    """An ``Epochs`` of ``{night: {dataset: OIData}}`` with the given
-    snapshot times (``{dataset: MJD}``, entries None to use the data's)."""
-    from ..epochs import Epochs
+def _read_nights(paths, metadata, gap_days):  # deliberate: named step
+    """``(mapping, times, notes)``: the files read, each split into nights
+    at ``gap_days``, as ``{night: {dataset: OIData}}`` in time order, the
+    dataset times, and per file the nights and datasets it fed."""
+    from ..oidata import OIData
 
-    names = {name for group in mapping.values() for name in group}
-    keep = {
-        k: float(v) for k, v in times.items() if v is not None and k in names
-    }
-    return Epochs(mapping, times=keep or None)
-
-
-def _match_metadata(metadata, paths):
-    """``{path: entry}`` of the metadata whose key is a path, its
-    resolved path or its file name."""
-    out, used = {}, set()
+    # {path: entry} of the metadata whose key is a path, its resolved path or
+    # its file name.
+    meta, used = {}, set()
     for path in paths:
         for key, entry in metadata.items():
             if _names_file(key, path):
-                out[path] = entry
+                meta[path] = entry
                 used.add(key)
     unknown = sorted(set(metadata) - used)
     if unknown:
         raise ValueError(f"metadata keys {unknown} match no input file.")
     allowed = {"epoch", "mjd"}
-    for path, entry in out.items():
+    for path, entry in meta.items():
         bad = sorted(set(entry) - allowed)
         if bad:
             raise ValueError(
                 f"metadata of {path}: unknown keys {bad}; allowed are "
                 f"{sorted(allowed)} (rulings go in the exclude setting)."
             )
-    return out
-
-
-def _read_nights(paths, metadata, gap_days):
-    """``(mapping, times, notes)``: the files read, each split into nights
-    at ``gap_days``, as ``{night: {dataset: OIData}}`` in time order, the
-    dataset times, and per file the nights and datasets it fed."""
-    from ..oidata import OIData
-
-    meta = _match_metadata(metadata, paths)
     parts, notes = [], {}
     for path in paths:
         entry = meta.get(path, {})
@@ -510,7 +496,7 @@ def _read_nights(paths, metadata, gap_days):
     return mapping, times, notes
 
 
-def _apply_exclude(mapping, exclude, notes):
+def _apply_exclude(mapping, exclude, notes):  # deliberate: named step
     """``(mapping, record)`` without the files, nights and datasets named in
     ``exclude``; ``record`` is ``{key: {"reason", "datasets"}}``."""
     record, dropped = {}, set()
@@ -583,26 +569,7 @@ def _load(p):
 # --- epochs ---
 
 
-def _position_grid(p, half, finest):
-    """The ``(grid, n, step, wanted)`` of the position search of half-width
-    ``half`` (mas), for a finest fringe scale ``finest``; ``max_grid``
-    coarsens the step beyond ``wanted`` (the report says so)."""
-    s = p.settings
-    wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
-    most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
-    n = min(2 * math.ceil(half / wanted) + 1, most)
-    axis = onp.linspace(-half, half, n)
-    lo, hi = s["flux_range"]
-    flux = onp.geomspace(lo, hi, 13)
-    return (
-        {"dra": axis, "ddec": axis, "flux": flux},
-        n,
-        2 * half / (n - 1),
-        wanted,
-    )
-
-
-def _night_positions(p):
+def _night_positions(p):  # deliberate: named step
     """``(EpochPositions, info)``: each night's peaks on a grid widened by
     ``_WIDEN`` until no best peak is on its edge."""
     from ..epochs import epoch_positions
@@ -621,7 +588,17 @@ def _night_positions(p):
     half = s["max_sep_mas"] or min(coarsest, cap)
     halves = []
     for _ in range(_MAX_WIDEN + 1):
-        grid, n, step, wanted = _position_grid(p, half, finest)
+        wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
+        most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
+        n = min(2 * math.ceil(half / wanted) + 1, most)
+        axis = onp.linspace(-half, half, n)
+        lo, hi = s["flux_range"]
+        grid = {
+            "dra": axis,
+            "ddec": axis,
+            "flux": onp.geomspace(lo, hi, 13),
+        }
+        step = 2 * half / (n - 1)  # max_grid coarsens beyond ``wanted``
         # Only the last pass's warnings (an edge, say) describe the result.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -660,7 +637,7 @@ def _night_positions(p):
     return found, info
 
 
-def _positions_json(found):
+def _positions_json(found):  # deliberate: test seam
     """``EpochPositions`` as a dict that ``json`` writes exactly (NaN and
     infinities as the ``json`` module spells them)."""
     return {
@@ -703,7 +680,7 @@ def _positions_json(found):
     }
 
 
-def _positions_from_json(d):
+def _positions_from_json(d):  # deliberate: test seam
     """The ``EpochPositions`` that ``_positions_json`` wrote."""
     from ..epochs import EpochPeaks, EpochPositions, NightFlag
 
@@ -742,7 +719,7 @@ def _positions_from_json(d):
     )
 
 
-def _read_positions(p):
+def _read_positions(p):  # deliberate: test seam
     path = p.output / "stages" / "epochs" / "positions.json"
     return _positions_from_json(_io.read_json(path))
 
@@ -782,13 +759,15 @@ def _epochs(p):
 # --- search ---
 
 
-def _band_checkpoints(p):
+def _band_checkpoints(p):  # deliberate: test seam
     # Outside the stage's declared outputs, so a re-run keeps the finished
     # bands (test_band_checkpoints_survive_a_rerun_but_not_a_fresh_run).
     return p.output / "stages" / "search" / "bands"
 
 
-def _alias_search(p, data, positions, times, checkpoint_dir):
+def _alias_search(  # deliberate: test seam
+    p, data, positions, times, checkpoint_dir
+):
     """The engine call of the ``search`` stage (and of the refit of the
     robustness check): ``fit_orbit_aliases`` with the settings."""
     from ..aliases import fit_orbit_aliases
@@ -847,10 +826,14 @@ def _alias_search(p, data, positions, times, checkpoint_dir):
 
 @_x64
 def _search(p):
+    import matplotlib.pyplot as plt
+
     epochs = p.data
+    data = list(epochs.data)
+    names = epochs.dataset_names
     result = _alias_search(
         p,
-        list(epochs.data),
+        data,
         _read_positions(p),
         epochs.times,
         _band_checkpoints(p),
@@ -859,11 +842,24 @@ def _search(p):
         p.output / "stages" / "search" / "aliases.json"
     ) as tmp:
         result.save(tmp)
-    _plot_bands(p.output, result)
-    return _search_report(result, list(epochs.data), epochs.dataset_names)
+    rows = [r for r in _band_rows(result) if onp.isfinite(r["log_z"])]
+    period = onp.array([0.5 * (r["p_lo"] + r["p_hi"]) for r in rows])
+    delta = onp.array([r["delta_log_z"] for r in rows])
+    chi2 = onp.array([r["chi2_red"] for r in rows])
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(11, 4))
+    ax.semilogx(period, delta, ".", color="0.4")
+    ax.semilogx(period[:1], delta[:1], "o", color="C3", label="best band")
+    ax.set_xlabel("period (d)")
+    ax.set_ylabel("log Z − log Z$_{best}$ (nats)")
+    ax.set_ylim(max(delta.min(), -200.0), 5.0)
+    ax.legend()
+    bx.loglog(period, chi2, ".", color="0.4")
+    bx.loglog(period[:1], chi2[:1], "o", color="C3")
+    bx.set_xlabel("period (d)")
+    bx.set_ylabel("raw χ²/ν")
+    fig.tight_layout()
+    _save(fig, p.output / "plots" / "search_bands.png")
 
-
-def _search_report(result, data, names):
     nights = result.chi2_per_night(data)
     primary = result.primary_fit or {}
     return {
@@ -944,28 +940,6 @@ def _band_rows(result):
     return rows
 
 
-def _plot_bands(output, result):
-    import matplotlib.pyplot as plt
-
-    rows = [r for r in _band_rows(result) if onp.isfinite(r["log_z"])]
-    period = onp.array([0.5 * (r["p_lo"] + r["p_hi"]) for r in rows])
-    delta = onp.array([r["delta_log_z"] for r in rows])
-    chi2 = onp.array([r["chi2_red"] for r in rows])
-    fig, (ax, bx) = plt.subplots(1, 2, figsize=(11, 4))
-    ax.semilogx(period, delta, ".", color="0.4")
-    ax.semilogx(period[:1], delta[:1], "o", color="C3", label="best band")
-    ax.set_xlabel("period (d)")
-    ax.set_ylabel("log Z − log Z$_{best}$ (nats)")
-    ax.set_ylim(max(delta.min(), -200.0), 5.0)
-    ax.legend()
-    bx.loglog(period, chi2, ".", color="0.4")
-    bx.loglog(period[:1], chi2[:1], "o", color="C3")
-    bx.set_xlabel("period (d)")
-    bx.set_ylabel("raw χ²/ν")
-    fig.tight_layout()
-    _save(fig, output / "plots" / "search_bands.png")
-
-
 def _load_result(p):
     from ..aliases import AliasResult
 
@@ -975,11 +949,16 @@ def _load_result(p):
 # --- modes ---
 
 
-def _single_star(problem, x, diam_range):
-    """Best log likelihood of the star alone: an invisible companion at ``x``,
-    and the primary's best diameter if the orbit fits one."""
+def _null_verdict(result, data, s):  # deliberate: test seam (monkeypatched)
+    """The best orbit against a single star: ``{delta_log_z,
+    log_like_single_star, threshold, verdict}``."""
     import jax.numpy as np
 
+    from ..aliases import _band_target
+
+    problem, _, x, settings = _band_target(result, data)
+    # The best log likelihood of the star alone: an invisible companion, and
+    # the primary's best diameter if the orbit fits one.
     x = onp.array(x, float)
     x[7] = _NO_COMPANION
 
@@ -993,27 +972,19 @@ def _single_star(problem, x, diam_range):
         return onp.asarray(problem.batch(np.asarray(xs), mixed=False))
 
     if len(x) <= 8:
-        return float(
+        null = float(
             onp.max(
                 onp.asarray(problem.batch(np.asarray(x[None]), mixed=False))
             )
         )
-    grid = onp.log(onp.geomspace(*diam_range, _N_DIAM_NULL))
-    ll = best(grid)
-    k = int(onp.argmax(ll))
-    near = onp.linspace(
-        grid[max(k - 1, 0)], grid[min(k + 1, len(grid) - 1)], _N_DIAM_NULL
-    )
-    return float(max(onp.max(ll), onp.max(best(near))))
-
-
-def _null_verdict(result, data, s):
-    """The best orbit against a single star: ``{delta_log_z,
-    log_like_single_star, threshold, verdict}``."""
-    from ..aliases import _band_target
-
-    problem, _, x, settings = _band_target(result, data)
-    null = _single_star(problem, x, settings.diam_range)
+    else:
+        grid = onp.log(onp.geomspace(*settings.diam_range, _N_DIAM_NULL))
+        ll = best(grid)
+        k = int(onp.argmax(ll))
+        near = onp.linspace(
+            grid[max(k - 1, 0)], grid[min(k + 1, len(grid) - 1)], _N_DIAM_NULL
+        )
+        null = float(max(onp.max(ll), onp.max(best(near))))
     delta = float(result.best.log_z - null)
     return {
         "delta_log_z": delta,
@@ -1060,7 +1031,7 @@ def _modes(p):
     }
 
 
-def _outlying_night(epochs, nights):
+def _outlying_night(epochs, nights):  # deliberate: test seam
     """``(night, indices, chi2_per_n)`` of the night with the highest raw
     χ²/N at the best orbit (``nights``: the search report's per-dataset
     table), the indices being its datasets'; ``None`` if no night has data."""
@@ -1084,18 +1055,36 @@ def _outlying_night(epochs, nights):
     return night, pooled[night][2], ratio[night]
 
 
-def _without(found, drop):
-    """``EpochPositions`` without the datasets at the indices ``drop``."""
-    keep = [k for k in range(len(found.names)) if k not in drop]
+def _robustness(p, result, verdict):  # deliberate: test seam
+    """Whether the verdict survives dropping the night of highest χ²/N.
+
+    Returns ``{"skipped": reason}`` when it is not run.
+    """
+    s = p.settings
+    epochs = p.data
+    if not s["drop_outlier_night"]:
+        return {"skipped": "drop_outlier_night is off"}
+    if len(epochs.names) < 3:  # the refit needs two nights; one has none
+        return {"skipped": "fewer than 3 nights"}
+    nights = p._report("search")["chi2"]["nights"]
+    outlier = _outlying_night(epochs, nights)
+    if outlier is None:
+        return {"skipped": "no night has data"}
+    night, drop, chi2_per_n = outlier
+    keep = [k for k in range(len(epochs.data)) if k not in drop]
+    data = [epochs.data[k] for k in keep]
+    found = _read_positions(p)
+    kept = [k for k in range(len(found.names)) if k not in drop]
 
     def pick(value):
         if value is None:
             return None
         if isinstance(value, tuple):
-            return tuple(value[k] for k in keep)
-        return value[keep]
+            return tuple(value[k] for k in kept)
+        return value[kept]
 
-    return dataclasses.replace(
+    # The datasets of the dropped night leave every per-dataset field.
+    positions = dataclasses.replace(
         found,
         **{
             f: pick(getattr(found, f))
@@ -1116,27 +1105,6 @@ def _without(found, drop):
             )
         },
     )
-
-
-def _robustness(p, result, verdict):
-    """Whether the verdict survives dropping the night of highest χ²/N.
-
-    Returns ``{"skipped": reason}`` when it is not run.
-    """
-    s = p.settings
-    epochs = p.data
-    if not s["drop_outlier_night"]:
-        return {"skipped": "drop_outlier_night is off"}
-    if len(epochs.names) < 3:  # the refit needs two nights; one has none
-        return {"skipped": "fewer than 3 nights"}
-    nights = p._report("search")["chi2"]["nights"]
-    outlier = _outlying_night(epochs, nights)
-    if outlier is None:
-        return {"skipped": "no night has data"}
-    night, drop, chi2_per_n = outlier
-    keep = [k for k in range(len(epochs.data)) if k not in drop]
-    data = [epochs.data[k] for k in keep]
-    positions = _without(_read_positions(p), drop)
     if int((~positions.flagged).sum()) < 2:  # flagged nights seed nothing
         return {"skipped": "fewer than 2 usable nights after the drop"}
     best = result.best
@@ -1175,7 +1143,7 @@ def _robustness(p, result, verdict):
     }
 
 
-def _plot_sky(p, result, epochs):
+def _plot_sky(p, result, epochs):  # deliberate: named step: one figure
     """The best orbit's track on the sky with each night's position, its
     error ellipse (flagged nights hollow) and the orbit at the night."""
     import matplotlib.pyplot as plt
@@ -1236,25 +1204,30 @@ def _plot_sky(p, result, epochs):
 # --- posterior ---
 
 
-def _box(bounds, x):
-    """The sampling box of one mode: the band's finite prior bounds, and for
-    the periodic coordinates one fundamental domain about the mode (τ one
-    cycle; ω, Ω folded by the (Ω + 180°, ω + 180°) mirror)."""
-    lo, hi = onp.array(bounds.lower, float), onp.array(bounds.upper, float)
-    for k, half in ((1, 0.5), (4, 180.0), (5, 90.0)):
-        lo[k], hi[k] = x[k] - half, x[k] + half
-    return lo, hi
-
-
-def _orbit_model(problem, priors):
-    """The numpyro model of the engine's posterior: uniform priors in the
-    engine's coordinates and the tempered, scale-marginalized likelihood."""
+def _sample_band(p, result, data, n):  # deliberate: named step
+    """NUTS over band ``n``: ``(samples, stats, summary)``."""
     import jax.numpy as np
     import numpyro
+    import numpyro.distributions as dist
 
-    from ..aliases import _loglike
+    from ..aliases import _band_target, _loglike, _physical
 
-    def model():
+    s = p.settings
+    problem, bounds, x0, _ = _band_target(result, data, n)
+    sites = _SITES[: len(x0)]
+    # The sampling box of the mode: the band's finite prior bounds, and for
+    # the periodic coordinates one fundamental domain about the mode (τ one
+    # cycle; ω, Ω folded by the (Ω + 180°, ω + 180°) mirror).
+    lo, hi = onp.array(bounds.lower, float), onp.array(bounds.upper, float)
+    for k, half in ((1, 0.5), (4, 180.0), (5, 90.0)):
+        lo[k], hi[k] = x0[k] - half, x0[k] + half
+    priors = {
+        name: dist.Uniform(float(a), float(b))
+        for name, a, b in zip(sites, lo, hi)
+    }
+    start = {k: onp.asarray(v) for k, v in zip(sites, x0)}
+
+    def model():  # uniform priors, tempered scale-marginalized likelihood
         x = np.stack([numpyro.sample(k, d) for k, d in priors.items()])
         numpyro.factor(
             "loglike",
@@ -1268,31 +1241,7 @@ def _orbit_model(problem, priors):
             ),
         )
 
-    return model
-
-
-def _sample_band(p, result, data, n):
-    """NUTS over band ``n``: ``(samples, stats, summary)``."""
-    import numpyro.distributions as dist
-
-    from ..aliases import _band_target, _physical
-
-    s = p.settings
-    problem, bounds, x0, _ = _band_target(result, data, n)
-    sites = _SITES[: len(x0)]
-    lo, hi = _box(bounds, x0)
-    priors = {
-        name: dist.Uniform(float(a), float(b))
-        for name, a, b in zip(sites, lo, hi)
-    }
-    start = {k: onp.asarray(v) for k, v in zip(sites, x0)}
-    mcmc = _run_chains(
-        _orbit_model(problem, priors),
-        s,
-        start,
-        dense_mass=True,
-        priors=priors,
-    )
+    mcmc = _run_chains(model, s, start, dense_mass=True, priors=priors)
     drawn, stats = _draws(mcmc)
     shape = drawn[sites[0]].shape
     flat = onp.stack([drawn[k].reshape(-1) for k in sites], axis=-1)
@@ -1304,7 +1253,9 @@ def _sample_band(p, result, data, n):
     return physical, stats, summary
 
 
-def _optimum_gap(problem, draws, x0, n_max=500):
+def _optimum_gap(  # deliberate: test seam (tests/test_pipeline_robust_core.py)
+    problem, draws, x0, n_max=500
+):
     """How far (nats) the best draw lies above the start (>0: search short)."""
     import jax.numpy as np
 
@@ -1315,7 +1266,19 @@ def _optimum_gap(problem, draws, x0, n_max=500):
     return max(0.0, gap) if math.isfinite(gap) else math.nan
 
 
-def _band_summary(n, physical, drawn, stats, priors, bounds):
+def _worst_fractions(  # deliberate: test seam (tests/test_pipeline_robust_core.py)
+    summaries,
+):
+    out = {}
+    for m in summaries:
+        for k, f in m["prior_bound_fraction"].items():
+            out[k] = float(onp.max([out.get(k, 0.0), f]))
+    return out
+
+
+def _band_summary(  # deliberate: named step
+    n, physical, drawn, stats, priors, bounds
+):
     """The report of one sampled band: intervals, diagnostics, bound fractions."""
     diagnostics = {k: _diagnostics([x]) for k, x in drawn.items()}
     angles = {"omega": 360.0, "Omega": 180.0}
@@ -1338,31 +1301,27 @@ def _band_summary(n, physical, drawn, stats, priors, bounds):
         )
         for name, x in physical.items()
     }
+    # Fraction of draws at a bound of the box: the band's period edges (the
+    # posterior cut by its band), the size and flux (both ends) and the top of
+    # the eccentricity (zero is no bound: circular orbits sit there).
+    at_bound = {}
+    for site in ("log_period", "log_a", "log_flux", "log_diam"):
+        if site in drawn:
+            at_bound[site] = _bound_samples(priors[site], drawn[site])
+    ecc = priors["ecc"]
+    width = float(ecc.high - ecc.low)
+    at_bound["ecc"] = float(
+        onp.mean(drawn["ecc"] > float(bounds.upper[2]) - _AT_BOUND * width)
+    )
     return {
         "n": int(n),
         "params": params,
         **_chain_health(diagnostics, stats),
-        "prior_bound_fraction": _bound_fractions(
-            drawn, priors, bounds.upper[2]
-        ),
+        "prior_bound_fraction": {
+            k: v for k, v in at_bound.items() if v is not None
+        },
         "log_period_lower": float(bounds.lower[_SITES.index("log_period")]),
     }
-
-
-def _bound_fractions(drawn, priors, ecc_top):
-    """Fraction of draws at a bound of the box: the band's period edges
-    (the posterior cut by its band), the size and flux (both ends) and the top
-    of the eccentricity (zero is no bound: circular orbits sit there)."""
-    out = {}
-    for site in ("log_period", "log_a", "log_flux", "log_diam"):
-        if site in drawn:
-            out[site] = _bound_samples(priors[site], drawn[site])
-    prior = priors["ecc"]
-    width = float(prior.high - prior.low)
-    out["ecc"] = float(
-        onp.mean(drawn["ecc"] > float(ecc_top) - _AT_BOUND * width)
-    )
-    return {k: v for k, v in out.items() if v is not None}
 
 
 @_x64
@@ -1372,10 +1331,13 @@ def _posterior(p):
     if modes["no_orbit"]["verdict"] == "no-orbit":
         # No orbit to sample: a single star fits as well (see the checks).
         _write_samples(p, {}, skipped="no-orbit")
+        import matplotlib.pyplot as plt
+
         for plot in ("corner", "trace"):
-            _empty_plot(
-                p.output / "plots" / f"posterior_{plot}.png", "no orbit"
-            )
+            fig, ax = plt.subplots(figsize=(4, 2))
+            ax.text(0.5, 0.5, "no orbit", ha="center", va="center")
+            ax.axis("off")
+            _save(fig, p.output / "plots" / f"posterior_{plot}.png")
         return {"skipped": "no-orbit", "modes": []}
     result = _load_result(p)
     data = list(p.data.data)
@@ -1402,23 +1364,6 @@ def _posterior(p):
         ),
         "prior_bound_fraction": _worst_fractions(summaries),
     }
-
-
-def _worst_fractions(summaries):
-    out = {}
-    for m in summaries:
-        for k, f in m["prior_bound_fraction"].items():
-            out[k] = float(onp.max([out.get(k, 0.0), f]))
-    return out
-
-
-def _empty_plot(path, text):
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(figsize=(4, 2))
-    ax.text(0.5, 0.5, text, ha="center", va="center")
-    ax.axis("off")
-    _save(fig, path)
 
 
 # === SUMMARY AND CHECKS ===
@@ -1480,44 +1425,6 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _nights_section(epochs, search):
-    """Per night: position, flags with reasons and the raw χ²/N at the best
-    orbit."""
-    rows = []
-    chi2 = search["chi2"]["nights"] if search else {}
-    for night in epochs["nights"]:
-        row = _pick(
-            night,
-            ("dataset", "mjd", "sep_mas", "flux", "gap_marginal", "edge"),
-            strict=False,
-        )
-        row["flags"] = night["flags"]
-        row["chi2_per_n"] = chi2.get(night["dataset"], {}).get("chi2_per_n")
-        rows.append(row)
-    return rows
-
-
-def _orbit_section(modes, post):
-    """The best band's elements: from the posterior (median, 1σ interval)
-    when sampled, else the maximum a posteriori."""
-    winner = next(
-        (
-            m
-            for m in (post or {}).get("modes", [])
-            if m["n"] == modes["winner"]["n"]
-        ),
-        None,
-    )
-    return {
-        "n": modes["winner"]["n"],
-        "verdict": modes["no_orbit"]["verdict"],
-        "source": "posterior" if winner else "map",
-        "elements": winner["params"]
-        if winner
-        else modes["winner"]["elements"],
-    }
-
-
 def _summarize(settings, reports):
     """``(sections, checks)`` of the summary from the stage reports so far."""
     load, epochs, search, modes, post = (
@@ -1528,7 +1435,20 @@ def _summarize(settings, reports):
     if load:
         sections["data"] = _pick(load, _DATA_KEYS, strict=False)
     if epochs:
-        sections["nights"] = _nights_section(epochs, search)
+        chi2 = search["chi2"]["nights"] if search else {}
+        rows = []
+        for night in epochs["nights"]:
+            row = _pick(
+                night,
+                ("dataset", "mjd", "sep_mas", "flux", "gap_marginal", "edge"),
+                strict=False,
+            )
+            row["flags"] = night["flags"]
+            row["chi2_per_n"] = chi2.get(night["dataset"], {}).get(
+                "chi2_per_n"
+            )
+            rows.append(row)
+        sections["nights"] = rows
     if search:
         pooled = search["chi2"]
         sections["chi2"] = {
@@ -1594,7 +1514,24 @@ def _summarize(settings, reports):
             )
         )
     if modes:
-        sections["orbit"] = _orbit_section(modes, post)
+        # The best band's elements: the posterior's (median, 1σ interval)
+        # when sampled, else the maximum a posteriori.
+        winner = next(
+            (
+                m
+                for m in (post or {}).get("modes", [])
+                if m["n"] == modes["winner"]["n"]
+            ),
+            None,
+        )
+        sections["orbit"] = {
+            "n": modes["winner"]["n"],
+            "verdict": modes["no_orbit"]["verdict"],
+            "source": "posterior" if winner else "map",
+            "elements": winner["params"]
+            if winner
+            else modes["winner"]["elements"],
+        }
     if post:
         sections["posterior"] = _pick(post, _POSTERIOR_KEYS, strict=False)
         if "r_hat_max" in post:

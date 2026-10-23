@@ -142,7 +142,16 @@ class _Pipeline:
         self.model = self._default_model() if model is None else model
         self.output = Path(output)
         self._processed = None
-        self.settings = self._resolve(settings)
+        unknown = sorted(set(settings) - set(self._DEFAULTS))
+        if unknown:
+            raise TypeError(
+                f"{type(self).__name__} got unknown settings {unknown}; valid "
+                f"settings are {sorted(self._DEFAULTS)}."
+            )
+        resolved = self.defaults()
+        resolved.update(settings)
+        self.settings = _normalize(resolved)
+        self._validate(self.settings)
         _io.require_extra("h5py")
         self.inputs = getattr(self, "_input_paths", None)
 
@@ -152,20 +161,6 @@ class _Pipeline:
     def defaults(cls):
         """The default settings, as a new dict."""
         return copy.deepcopy(cls._DEFAULTS)
-
-    @classmethod
-    def _resolve(cls, overrides):
-        unknown = sorted(set(overrides) - set(cls._DEFAULTS))
-        if unknown:
-            raise TypeError(
-                f"{cls.__name__} got unknown settings {unknown}; valid "
-                f"settings are {sorted(cls._DEFAULTS)}."
-            )
-        settings = cls.defaults()
-        settings.update(overrides)
-        settings = _normalize(settings)
-        cls._validate(settings)
-        return settings
 
     @classmethod
     def _validate(cls, settings):
@@ -323,25 +318,6 @@ class _Pipeline:
         record["updated"] = _now()
         _io.write_json(self.output / "run.json", record)
 
-    def _new_record(self, versions):
-        return {
-            "schema": SCHEMA,
-            "pipeline": self.NAME,
-            "class": type(self).__name__,
-            "stability": self.STABILITY,
-            "status": "running",
-            "error": None,
-            "config": self.settings,
-            "model": self._model_digest(),
-            "inputs": {
-                "data_sha256": self._data_fingerprint(),
-                "files": self._input_files(),
-            },
-            "provenance": versions,
-            "stages": {},
-            "created": _now(),
-        }
-
     def run(self, through=None, *, resume=True):
         """Run the stages in order, up to and including ``through``.
 
@@ -369,25 +345,14 @@ class _Pipeline:
             names if through is None else names[: names.index(through) + 1]
         )
         versions = provenance()
-        record = self._open_record(resume, versions)
-        stages = {stage.name: stage for stage in self._stages()}
-        rerun = False
-        for name in selected:
-            if not rerun and self._is_done(record, stages[name]):
-                continue
-            rerun = True  # later stages depend on this one
-            for later in names[names.index(name) :]:
-                record["stages"].pop(later, None)
-                self._discard(stages[later])
-            self._run_stage(record, stages[name], versions, name == names[-1])
-        self._close_record(record, names)
-        return _io.load(self.output)
-
-    def _open_record(self, resume, versions):
-        """The ``run.json`` record to continue (or a new one), marked running."""
         run_file = self.output / "run.json"
         if not resume:
-            self._clear()
+            for name in (*_OWNED, *self._OWNED_EXTRA):
+                path = self.output / name
+                if path.is_dir():
+                    shutil.rmtree(path)
+                elif path.exists():
+                    path.unlink()
         if resume and run_file.exists():
             record = _io.read_json(run_file)
             self._check_resume(record)
@@ -395,20 +360,62 @@ class _Pipeline:
             record["provenance"] = versions
             record.pop("files", None)  # stale until the run is closed
         else:
-            record = self._new_record(versions)
+            record = {
+                "schema": SCHEMA,
+                "pipeline": self.NAME,
+                "class": type(self).__name__,
+                "stability": self.STABILITY,
+                "status": "running",
+                "error": None,
+                "config": self.settings,
+                "model": self._model_digest(),
+                "inputs": {
+                    "data_sha256": self._data_fingerprint(),
+                    "files": self._input_files(),
+                },
+                "provenance": versions,
+                "stages": {},
+                "created": _now(),
+            }
         record["status"], record["error"] = "running", None
         self.output.mkdir(parents=True, exist_ok=True)
         self._write_record(record)
-        return record
-
-    def _is_done(self, record, stage):
-        """Whether ``stage`` completed and all its outputs are still there."""
-        entry = record["stages"].get(stage.name, {})
-        return entry.get("status") == "complete" and all(
-            (self.output / p).exists() for p in stage.outputs
+        stages = {stage.name: stage for stage in self._stages()}
+        rerun = False
+        for name in selected:
+            entry = record["stages"].get(name, {})
+            if (
+                not rerun
+                and entry.get("status") == "complete"
+                and all(
+                    (self.output / p).exists() for p in stages[name].outputs
+                )
+            ):
+                continue
+            rerun = True  # later stages depend on this one
+            for later in names[names.index(name) :]:
+                record["stages"].pop(later, None)
+                self._discard(stages[later])
+            self._run_stage(record, stages[name], versions, name == names[-1])
+        complete = all(
+            record["stages"].get(n, {}).get("status") == "complete"
+            for n in names
         )
+        record["status"] = "complete" if complete else "partial"
+        self._write_summary(record)
+        record["files"] = {
+            str(p.relative_to(self.output)): _io.sha256_file(p)
+            for p in sorted(self.output.rglob("*"))
+            if p.is_file()
+            and p.name != "run.json"
+            and not p.name.startswith(".")
+        }
+        self._write_record(record)
+        return _io.load(self.output)
 
-    def _run_stage(self, record, stage, versions, last):
+    def _run_stage(
+        self, record, stage, versions, last
+    ):  # deliberate: named step
         """Run one stage, writing its report and updating ``record``."""
         name = stage.name
         started, t0 = _now(), time.perf_counter()
@@ -430,7 +437,19 @@ class _Pipeline:
                 self.output / "stages" / name / "report.json", report
             )
         except BaseException as err:
-            self._record_failure(record, name, err, caught, t0)
+            record["stages"][name].update(
+                status="failed", seconds=time.perf_counter() - t0
+            )
+            record["status"] = "failed"
+            record["error"] = {
+                "stage": name,
+                "type": type(err).__name__,
+                "message": str(err),
+                "traceback": traceback.format_exc(),
+                # The warnings often explain the failure.
+                "warnings": _record_warnings(name, caught),
+            }
+            self._write_record(record)
             raise
         record["stages"][name] = {
             "status": "complete",
@@ -443,58 +462,19 @@ class _Pipeline:
         self._write_summary(record)
         self._write_record(record)
 
-    def _record_failure(self, record, name, err, caught, t0):
-        record["stages"][name].update(
-            status="failed", seconds=time.perf_counter() - t0
-        )
-        record["status"] = "failed"
-        record["error"] = {
-            "stage": name,
-            "type": type(err).__name__,
-            "message": str(err),
-            "traceback": traceback.format_exc(),
-            # The warnings often explain the failure.
-            "warnings": _record_warnings(name, caught),
-        }
-        self._write_record(record)
-
-    def _close_record(self, record, names):
-        """Set the final status, write the summary and hash the outputs."""
-        complete = all(
-            record["stages"].get(n, {}).get("status") == "complete"
-            for n in names
-        )
-        record["status"] = "complete" if complete else "partial"
-        self._write_summary(record)
-        record["files"] = self._file_hashes()
-        self._write_record(record)
-
-    def _discard(self, stage):
+    def _discard(self, stage):  # deliberate: test seam
         """Delete a stage's report and declared outputs (they are stale)."""
         report = self.output / "stages" / stage.name / "report.json"
         for path in (report, *(self.output / p for p in stage.outputs)):
             if path.exists():
                 path.unlink()
 
-    def _file_hashes(self):
-        return {
-            str(p.relative_to(self.output)): _io.sha256_file(p)
-            for p in sorted(self.output.rglob("*"))
-            if p.is_file()
-            and p.name != "run.json"
-            and not p.name.startswith(".")
-        }
-
-    def _reports(self):
+    def _write_summary(self, record):
         reports = {}
         for name in self.STAGES:
             path = self.output / "stages" / name / "report.json"
             if path.exists():
                 reports[name] = _io.read_json(path)
-        return reports
-
-    def _write_summary(self, record):
-        reports = self._reports()
         sections, checks = self._summarize(reports)
         caught = [w for r in reports.values() for w in r.get("warnings", [])]
         checks = list(checks) + stage_warning_checks(caught)
@@ -509,14 +489,6 @@ class _Pipeline:
             "checks": [c.to_dict() for c in checks],
         }
         _io.write_json(self.output / "summary.json", summary)
-
-    def _clear(self):
-        for name in (*_OWNED, *self._OWNED_EXTRA):
-            path = self.output / name
-            if path.is_dir():
-                shutil.rmtree(path)
-            elif path.exists():
-                path.unlink()
 
     def __repr__(self):
         return (
