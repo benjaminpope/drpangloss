@@ -58,8 +58,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         default ``()``, none.
     bandwidth : bool, optional
         For OIFITS input, keep the channel widths (``EFF_BAND``, metres) as
-        ``bandwidth`` (see [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]) so models are smeared over each channel; default False,
-        ``bandwidth`` is None. For a dictionary give a ``bandwidth`` key.
+        ``bandwidth`` (see
+        [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]) so models are
+        smeared over each channel; default False, ``bandwidth`` is None. For a
+        dictionary give a ``bandwidth`` key.
     insname : str or sequence of str, optional
         For OIFITS input, the ``INSNAME`` table(s) to keep; None keeps all.
         A GRAVITY file with fringe-tracker and science tables raises
@@ -563,7 +565,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        ``data.select(2.05e-6, 2.16e-6)`` keeps a continuum window.
+        ``data.select(2.05e-6, 2.16e-6)`` keeps a continuum window;
+        ``data.select(exclude=[(2.162e-6, 2.170e-6)])`` drops a line.
         """
         if ranges is not None and (
             wavel_min is not None or wavel_max is not None
@@ -1346,6 +1349,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             Floors per observable: ``"vis"``, ``"phi"`` (radians) and the kinds of
             ``extras``. Relative floors are not defined for phases.
 
+        Returns
+        -------
+        OIData
+
+        Notes
+        -----
         Closure phases from four or more telescopes are floored before they are
         whitened; the periodic penalty rows keep their effective error 1/√(2π).
 
@@ -1486,8 +1495,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
-        Each spectrum is known up to a scale, marginalized analytically under a
-        Gaussian prior that you state (see
+        Each spectrum (OI_FLUX, or correlated fluxes) is known up to a scale,
+        marginalized analytically under a Gaussian prior that you state (see
         [`FluxSpectrum`][virgil.observables.FluxSpectrum]).
 
         Parameters

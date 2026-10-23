@@ -56,7 +56,8 @@ def read_oifits(
     """Read an OIFITS file into the record `OIData(source)` is built from.
 
     Prefers `OI_VIS2` over amplitudes and `OI_T3` over absolute phases; see
-    [OIFITS files](../oifits_files.md) for how closure phases are matched.
+    [OIFITS files](../oifits_files.md) for the tables read and how closure
+    phases are matched.
     Source: Pauls et al. (2005), [references](../references.md#pauls2005);
     Duvert et al. (2015), [references](../references.md#duvert2017).
 
@@ -1274,6 +1275,7 @@ def write_oifits(data, filename, overwrite=True):
     Returns
     -------
     pathlib.Path
+        The path written.
 
     Raises
     ------

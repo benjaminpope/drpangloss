@@ -170,8 +170,9 @@ def nrm_oidata(
 ):
     """A simulated non-redundant masking observation: V² and closure phases.
 
-    One squared visibility per baseline between two holes (as in AMICAL) and
-    the closure phases of every triangle: 21 V² and 35 closure phases for the
+    One squared visibility at the centre of each splodge, that is at each
+    baseline between two holes (as in AMICAL), and the closure phases of every
+    triangle: 21 V² and 35 closure phases for the
     7-hole NIRISS mask.
 
     Parameters
@@ -245,7 +246,8 @@ def vlti_oidata(
 
     Every telescope pair at each hour angle and channel, with the closure
     phases of every triangle; the defaults resemble VLTI/MATISSE in the L band
-    with the four UTs. Bandwidth smearing is modelled only if you opt in with
+    with the four UTs. Bandwidth smearing (MATISSE LOW, R ~ 30) is modelled
+    only if you opt in with
     [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth].
 
     Parameters

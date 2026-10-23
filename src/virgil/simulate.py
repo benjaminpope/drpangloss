@@ -33,7 +33,8 @@ def simulate(scene, template, key=None, noise_scale=1.0, shift_days=None):
         [`Attached`][virgil.models.Attached] components) is evaluated at
         each sample's own time, so the template needs times.
     template : OIData
-        The observation to copy: samples, observables, errors, correlations.
+        The observation to copy: its samples, wavelengths, observables, errors,
+        closure-phase correlations and projections.
     key : jax.random.PRNGKey, optional
         Gaussian noise with the template's errors and closure-phase
         correlations; noiseless without it.
