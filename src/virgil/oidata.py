@@ -45,8 +45,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     Parameters
     ----------
     data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
-        An OIFITS file (or a list of them, concatenated), or a dictionary of
-        arrays; see [`virgil.oidata`](../api/oidata.md#dictionary-input).
+        An OIFITS file (a list of them is concatenated; read with
+        [`read_oifits`][virgil.oifits.read_oifits]), or a dictionary of arrays
+        (keys in [`virgil.oidata`](../api/oidata.md#dictionary-input)): at
+        least ``u``, ``v``, ``wavel``, ``vis`` and ``d_vis``, usually ``phi``,
+        ``d_phi`` and the closure indices ``i_cps1``, ``i_cps2``, ``i_cps3``.
     target : str or int, optional
         For OIFITS input, the target to keep (name or ``TARGET_ID``); required
         when the file holds more than one.
@@ -134,31 +137,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def __init__(
         self, data, target=None, extras=(), bandwidth=False, insname=None
     ):
-        """Initialize from an OIFITS file or explicit arrays.
-
-        Parameters
-        ----------
-        data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
-            An OIFITS file or a list of them, read with
-            [`read_oifits`][virgil.oifits.read_oifits], or a dictionary of arrays
-            (keys in [Dictionary input](../api/oidata.md#dictionary-input)): at
-            least ``u``, ``v``, ``wavel``, ``vis`` and ``d_vis``, usually ``phi``,
-            ``d_phi`` and the closure indices ``i_cps1``, ``i_cps2``, ``i_cps3``.
-        target : str or int, optional
-            For OIFITS input, the target to keep.
-        extras : sequence of str, optional
-            For OIFITS input, the extra observables to read (see
-            [`read_oifits`][virgil.oifits.read_oifits]).
-        bandwidth : bool, optional
-            For OIFITS input, keep the channel widths (``EFF_BAND``) as
-            ``OIData.bandwidth`` so models are smeared over each channel (see
-            [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). For a
-            dictionary, give a ``bandwidth`` key instead.
-        insname : str or sequence of str, optional
-            For OIFITS input, the instrument table(s) to keep, as in
-            [`read_oifits`][virgil.oifits.read_oifits]; needed for GRAVITY
-            files that hold both fringe-tracker and science tables.
-        """
+        """Initialize from an OIFITS file or explicit arrays (see the class)."""
         if not isinstance(data, dict):
             data = read_oifits(
                 data,
@@ -253,7 +232,27 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             if stations is not None and len(stations) == vis.shape[0]:
                 stations = onp.repeat(stations, vis.shape[1], axis=0)
         if vis.ndim == 2:
-            u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
+            # One sample per (baseline, channel), baseline-major; closure
+            # indices (per baseline) map to the samples at the same channel.
+            n_baseline, n_wavel = vis.shape
+            if u.shape != (n_baseline,) or v.shape != (n_baseline,):
+                raise ValueError(
+                    f"vis has shape {vis.shape}, so u and v need "
+                    f"{n_baseline} entries (one per baseline)."
+                )
+            if wavel.size != n_wavel:
+                raise ValueError(
+                    f"vis has {n_wavel} wavelength channels but wavel has "
+                    f"{wavel.size} values."
+                )
+            if indices is not None:
+                channels = onp.arange(n_wavel)
+                indices = [
+                    (index[:, None] * n_wavel + channels[None, :]).reshape(-1)
+                    for index in indices
+                ]
+            u, v = onp.repeat(u, n_wavel), onp.repeat(v, n_wavel)
+            wavel = onp.tile(wavel, n_baseline)
             if bandwidth is not None and bandwidth.size > 1:
                 bandwidth = onp.tile(bandwidth, vis.shape[0])
             vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
@@ -564,8 +563,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        ``data.select(2.05e-6, 2.16e-6)`` keeps a continuum window;
-        ``data.select(exclude=[(2.162e-6, 2.170e-6)])`` drops a line.
+        ``data.select(2.05e-6, 2.16e-6)`` keeps a continuum window.
         """
         if ranges is not None and (
             wavel_min is not None or wavel_max is not None
@@ -1303,8 +1301,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         --------
         >>> data = OIData({"u": [1.0, 2.0], "v": [0.0, 1.0], "wavel": 1e-6,
         ...                "vis": [0.9, 0.5], "d_vis": [0.01, 0.02]})
-        >>> scaled = data.with_error_scale({"vis": 3.0})
-        >>> [round(float(e), 3) for e in scaled.d_vis]
+        >>> [round(float(e), 3) for e in data.with_error_scale(3.0).d_vis]
         [0.03, 0.06]
         """
         if isinstance(factor, dict):
@@ -1349,18 +1346,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             Floors per observable: ``"vis"``, ``"phi"`` (radians) and the kinds of
             ``extras``. Relative floors are not defined for phases.
 
-        Returns
-        -------
-        OIData
-
-        Notes
-        -----
         Closure phases from four or more telescopes are floored before they are
         whitened; the periodic penalty rows keep their effective error 1/√(2π).
 
         Examples
         --------
-        >>> import numpy as onp
         >>> data = OIData({"u": [1.0, 2.0], "v": [0.0, 1.0], "wavel": 1e-6,
         ...                "vis": [0.9, 0.5], "d_vis": [0.001, 0.02]})
         >>> floored = data.with_error_floor(relative={"vis": 0.01})
@@ -1455,8 +1445,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        ``data.with_continuum([(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)],
-        lines=[(2.163e-6, 2.169e-6)])``.
+        ``data.with_continuum([(2.150e-6, 2.162e-6)], lines=[(2.163e-6, 2.169e-6)])``.
         """
         kinds = {b.kind for b in self.extras} & {"visphi", "nflux"}
         if not kinds:
@@ -1497,8 +1486,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
-        Each spectrum (OI_FLUX, or correlated fluxes) is known up to a scale,
-        marginalized analytically under a Gaussian prior that you state (see
+        Each spectrum is known up to a scale, marginalized analytically under a
+        Gaussian prior that you state (see
         [`FluxSpectrum`][virgil.observables.FluxSpectrum]).
 
         Parameters
@@ -1795,6 +1784,7 @@ def _good(record):
     return good, value, error
 
 
+# deliberate: a named step: validates and packs the extra observables.
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)
@@ -1943,12 +1933,7 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     -------
     array-like
         Closure phases ``φ[i1] + φ[i2] − φ[i3]`` in radians, wrapped into
-        ``[-π, π)``.
-
-    Notes
-    -----
-    This helper returns radians for internal modeling consistency. Convert to
-    degrees before writing OIFITS phase columns (e.g., ``T3PHI``).
+        ``[-π, π)``; convert to degrees for OIFITS columns such as ``T3PHI``.
     """
     phases = np.angle(np.asarray(cvis))
     cp = (
@@ -1961,6 +1946,9 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
 
 def cp_indices(vis_sta_index, cp_sta_index):
     """Map closure-triangle station indices to baseline indices.
+
+    Baselines are matched on station indices alone; for several epochs or
+    channels use [`read_oifits`][virgil.oifits.read_oifits].
 
     Parameters
     ----------
@@ -1981,11 +1969,6 @@ def cp_indices(vis_sta_index, cp_sta_index):
     ValueError
         If a triangle needs a baseline that is missing, or stored only in the
         reversed orientation.
-
-    Notes
-    -----
-    Baselines are matched on station indices alone; for several epochs or
-    channels use [`read_oifits`][virgil.oifits.read_oifits].
     """
     vis_sta_index = onp.asarray(vis_sta_index, dtype=int).reshape(-1, 2)
     cp_sta_index = onp.asarray(cp_sta_index, dtype=int).reshape(-1, 3)
@@ -2017,37 +2000,6 @@ def cp_indices(vis_sta_index, cp_sta_index):
 def _check_bandwidth(bandwidth):
     if not onp.all(onp.isfinite(bandwidth)) or onp.any(bandwidth < 0):
         raise ValueError("bandwidth must be finite and non-negative (metres).")
-
-
-def _expand_channels(u, v, wavel, vis, indices):
-    """Expand per-baseline arrays to one sample per (baseline, channel).
-
-    Samples are ordered baseline-major; closure indices (per baseline) are
-    mapped to the samples at the same channel.
-    """
-    n_baseline, n_wavel = vis.shape
-    if u.shape != (n_baseline,) or v.shape != (n_baseline,):
-        raise ValueError(
-            f"vis has shape {vis.shape}, so u and v need {n_baseline} "
-            "entries (one per baseline)."
-        )
-    if wavel.size != n_wavel:
-        raise ValueError(
-            f"vis has {n_wavel} wavelength channels but wavel has "
-            f"{wavel.size} values."
-        )
-    channels = onp.arange(n_wavel)
-    if indices is not None:
-        indices = [
-            (index[:, None] * n_wavel + channels[None, :]).reshape(-1)
-            for index in indices
-        ]
-    return (
-        onp.repeat(u, n_wavel),
-        onp.repeat(v, n_wavel),
-        onp.tile(wavel, n_baseline),
-        indices,
-    )
 
 
 _ZERO_PROJECTED_ERROR = (
