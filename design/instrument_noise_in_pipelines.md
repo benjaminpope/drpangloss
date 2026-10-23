@@ -290,7 +290,7 @@ Science targets in this note are examples only.
 Two steps. The first uses the instrument package; the second is the pipeline
 with **no instrument settings**.
 
-The reference is the Gl 229 `OrbitPipeline` release gate in
+The reference is the Gl 229 `OrbitPipeline` run (the release gate through 0.4.1; retired 2026-10-23) in
 [ozstar_scripts#33](https://github.com/benjaminpope/ozstar_scripts/pull/33)
 (`scripts/orbit_aliases`):
 

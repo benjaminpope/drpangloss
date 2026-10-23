@@ -187,7 +187,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
 2. On GitHub, under *Settings → Environments*, create the environment `pypi`. Adding yourself as a required reviewer makes every upload wait for your approval.
 
 **Each release** (a short list; every item must hold for the commit you tag):
-1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the CHANGELOG heading is dated (`## 0.4.0 (YYYY-MM-DD)`, not `Unreleased`). Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
+1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the CHANGELOG heading is dated (`## X.Y.Z (YYYY-MM-DD)`, not `Unreleased`). Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
 2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
    ```bash
    gh workflow run tests.yml --ref main
@@ -198,7 +198,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
    - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes);
    - the mutation kill rate of its suite (`scripts/mutation.py`) is reported in the release notes.
-4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`), and the period-alias search for Gl 229 Ba–Bb (ozstar_scripts job `orbit_aliases`, which runs virgil-validation's `scripts/reanalyse_orbits.py`, i.e. `virgil.aliases.fit_orbit_aliases`) runs cold (`--no-init`) at the release commit and ranks the N = 34 alias band (P ≈ 12.134 d) first with Δlog Z > 10 over every other band. The aliases come from the integer number of orbits across the 233 d gap between observing seasons; results are on virgil-validation's Period aliases page.
+4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was retired on 2026-10-23: the alias-search regressions are guarded by the CI tests listed in AGENTS.md "Binary orbits: solved problems", and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
 5. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
