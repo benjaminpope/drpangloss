@@ -86,10 +86,8 @@ _SCREEN_STEPS = 25
 class DiskModel:
     """A model ``DiskPipeline`` can fit, registered under a short name.
 
-    The registry holds parallel options, not a chain: each entry runs the
-    ``profile`` and ``compare`` stages start to finish on its own, with its
-    own settings and checks. Adding an entry (say a cone) is adding a row
-    to ``MODELS``, with no new stage.
+    Entries of ``MODELS`` are parallel options, not a chain: each runs the
+    ``profile`` and ``compare`` stages on its own settings and checks.
 
     Attributes
     ----------
@@ -194,16 +192,14 @@ class DiskPipeline(_Pipeline):
 
     The star is a grey point source unless ``star_diameter_mas``,
     ``star_temperature_k`` or ``star_index`` says otherwise; the disk's
-    spectral index is relative to it. Stages: ``load`` (apply ``wavel_range`` and
-    ``error_floor``), ``overview`` (plots; sets the half-fringe λ/2B of the
-    longest baseline), ``geometry`` (χ² over a grid of cos ``inc`` and ``pa``,
-    then a single-ring fit), ``profile``, ``compare``, ``posterior`` (NUTS,
-    with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
-    ``RadialGP`` profile at each length scale of a grid and keeps the one of
-    largest Laplace evidence; ``"rings"`` adds Gaussian rings until the BIC
-    stops improving. ``run()`` returns a ``Result``: ``res.summary["disk"]``
-    (``n_rings`` and ``rings`` for ``"rings"``), ``res.model()`` (the best fit),
-    ``res.checks``. All settings, with defaults:
+    spectral index is relative to it. Stages: ``load`` (applies ``wavel_range`` and ``error_floor``), ``overview`` (plots;
+    sets the half-fringe λ/2B), ``geometry`` (χ² grid over cos ``inc`` and
+    ``pa``, then a single-ring fit), ``profile``, ``compare``, ``posterior``
+    (NUTS, with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
+    ``RadialGP`` profile at each length scale and keeps the largest Laplace
+    evidence; ``"rings"`` adds Gaussian rings until the BIC stops improving.
+    ``run()`` returns a ``Result`` (``res.summary["disk"]``, ``res.model()``,
+    ``res.checks``). All settings, with defaults:
     [pipeline settings](../pipeline.md#diskpipeline-settings).
 
     Parameters
@@ -519,30 +515,10 @@ class _Context:
         return self.ells[len(self.ells) // 2]
 
 
-def _channels(data):
-    wavel = onp.asarray(data.wavel, dtype=float)
-    return int(onp.unique(onp.round(wavel, 12)).size)
-
-
-def _n_nodes(settings, data, r_in, r_out, halffringe, ell_min):
-    """Quadrature nodes for the ring family and for the Gaussian process."""
-    from ..models import GaussianRing, MultipoleDisk, RadialGP
-
-    if settings["n_r"] is not None:
-        return int(settings["n_r"]), int(settings["n_r"])
-    ring = MultipoleDisk(
-        GaussianRing(0.5 * r_out, halffringe), inc=40.0, pa=0.0
-    ).suggest_n_r(data)
-    gp = MultipoleDisk(RadialGP(r_in, r_out), n_r=16).suggest_n_r(data)
-    # Four nodes per length scale resolve the shortest ℓ.
-    per_ell = int(8 * math.ceil(4.0 * (r_out - r_in) / ell_min / 8.0))
-    return int(ring), int(min(max(gp, per_ell, 16), 96))
-
-
 # === STAGES: LOAD AND OVERVIEW ===
 
 
-def _load_disk(p):
+def _load_disk(p):  # deliberate: stage callable, patched by tests
     p._error_factor = 1.0  # the data as given, whatever an old run found
     return _load_report(p)
 
@@ -550,6 +526,7 @@ def _load_disk(p):
 def _overview(p):
     p._error_factor = 1.0
     from ..imaging import image_field
+    from ..models import GaussianRing, MultipoleDisk, RadialGP
 
     s, data = p.settings, p.processed
     _overview_plots(p, data)
@@ -566,8 +543,19 @@ def _overview(p):
             f"inner radius {r_in:.3g} mas; give r_out_mas."
         )
     ell = [_ELL_PER_EQUIVALENT * k * halffringe for k in s["ell_halffringes"]]
-    n_rings, n_gp = _n_nodes(s, data, r_in, r_out, halffringe, min(ell))
-    channels = _channels(data)
+    if s["n_r"] is not None:
+        n_rings = n_gp = int(s["n_r"])
+    else:
+        ring = MultipoleDisk(
+            GaussianRing(0.5 * r_out, halffringe), inc=40.0, pa=0.0
+        ).suggest_n_r(data)
+        gp = MultipoleDisk(RadialGP(r_in, r_out), n_r=16).suggest_n_r(data)
+        # Four nodes per length scale resolve the shortest ℓ.
+        per_ell = int(8 * math.ceil(4.0 * (r_out - r_in) / min(ell) / 8.0))
+        n_rings, n_gp = int(ring), int(min(max(gp, per_ell, 16), 96))
+    channels = int(
+        onp.unique(onp.round(onp.asarray(data.wavel, dtype=float), 12)).size
+    )
     wavel0 = (
         float(s["wavel0_m"])
         if s["wavel0_m"] is not None
@@ -627,7 +615,7 @@ def _star(ctx):
     return PointSource(flux=flux)
 
 
-def _star_report(settings):
+def _star_report(settings):  # deliberate: test seam: the summary entry alone
     """What the star is, for the summary: the disk's colour is relative to it."""
     if settings["star_temperature_k"] is not None:
         spectrum = f"blackbody {settings['star_temperature_k']:g} K"
@@ -805,6 +793,7 @@ def _finish(model, values, info, priors, data):
     )
 
 
+# deliberate: test seam: pulls starts inside the support
 def _inside_priors(priors, start):
     """``start`` with any value outside its prior's support pulled just inside."""
     from .._flat import _base
@@ -883,6 +872,7 @@ def _single_ring(ctx, *, cos_inc, pa, r1, f1):
 
 
 @in_float64
+# deliberate: float64 boundary (in_float64) around the jitted grid
 def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     import jax.numpy as np
 
@@ -903,7 +893,7 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     )
 
 
-def _grid_minima(delta, inc_deg):
+def _grid_minima(delta, inc_deg):  # deliberate: test seam: pure NumPy logic
     """Local minima of the geometry map ``delta[inc, pa]`` (``pa`` is periodic)."""
     n_inc, n_pa = delta.shape
     minima = []
@@ -923,6 +913,7 @@ def _grid_minima(delta, inc_deg):
     return sorted(minima)
 
 
+# deliberate: test seam: formula checked directly
 def _dynamic_range_sigma(ctx, r0, sigma):
     """The Gaussian process's σ: ln of the single ring's peak-to-mean contrast."""
     contrast = (ctx.r_out**2 - ctx.r_in**2) / (
@@ -932,21 +923,10 @@ def _dynamic_range_sigma(ctx, r0, sigma):
     return float(min(max(math.log(max(contrast, 1.0)), lo), hi))
 
 
-def _plot_geometry(p, cos_axis, pa_axis, delta):
+def _geometry_stage(p):  # deliberate: stage callable, patched by tests
+    p._error_factor = 1.0  # the geometry is found on the quoted errors
     import matplotlib.pyplot as plt
 
-    inc = onp.degrees(onp.arccos(cos_axis))
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    shown = onp.clip(delta, 0.0, onp.nanmin(delta) + 400.0)
-    mesh = ax.pcolormesh(pa_axis, inc, shown, shading="auto", cmap="viridis_r")
-    fig.colorbar(mesh, ax=ax, label="Δχ² (clipped)")
-    ax.set(xlabel="position angle (deg)", ylabel="inclination (deg)")
-    ax.set_title("Single-ring geometry grid")
-    _save(fig, p.output / "plots" / "geometry_grid.png")
-
-
-def _geometry_stage(p):
-    p._error_factor = 1.0  # the geometry is found on the quoted errors
     ctx, data = p._ctx(), p.processed
     s = p.settings
     inc_max = math.radians(ctx.inc_max)
@@ -987,7 +967,15 @@ def _geometry_stage(p):
             "axes": {"inc_deg": inc_deg},
         },
     )
-    _plot_geometry(p, cos_axis, pa_axis, delta)
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    shown = onp.clip(delta, 0.0, onp.nanmin(delta) + 400.0)
+    mesh = ax.pcolormesh(
+        pa_axis, inc_deg, shown, shading="auto", cmap="viridis_r"
+    )
+    fig.colorbar(mesh, ax=ax, label="Δχ² (clipped)")
+    ax.set(xlabel="position angle (deg)", ylabel="inclination (deg)")
+    ax.set_title("Single-ring geometry grid")
+    _save(fig, p.output / "plots" / "geometry_grid.png")
 
     shape = _Shape(1, False, 0, False)
     start = {
@@ -1143,6 +1131,7 @@ def _ring_start(ctx, held, n, new):
     return start
 
 
+# deliberate: jit boundary: stable cache key via functools.partial
 def _scan_model(ctx, shape, base, *, rnew, fnew):
     v = dict(base)
     i = shape.n
@@ -1181,6 +1170,7 @@ def _bic(fit, n):
     return score + fit.n_free * math.log(n)
 
 
+# deliberate: test seam: the ring-and-planet loop
 def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape``, search the residuals, refit with a planet if found.
 
@@ -1291,7 +1281,7 @@ def _backfit(p, shape, fit):
     return fit, steps
 
 
-def _prune(p, shape, fit):
+def _prune(p, shape, fit):  # deliberate: test seam: ring pruning
     """Drop the ring whose removal lowers the BIC most, repeatedly: ``(fit, shape, dropped)``."""
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     dropped = []
@@ -1321,6 +1311,7 @@ def _prune(p, shape, fit):
     return fit, shape, dropped
 
 
+# deliberate: named stage: the rings profile of the model registry
 def _profile_rings(p):
     s, ctx, data = p.settings, p._ctx(), p.processed
     n_data = int(data.n_independent)
@@ -1570,6 +1561,7 @@ def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
     return _finish(model, values, info, priors, data), priors
 
 
+# deliberate: test seam: fold of GP harmonics
 def _fold_gp_values(ctx, values, degree=None):
     """``_fold_fit`` for the Gaussian process: ``pa`` in [0°, 180°), latents turned."""
     pa = float(onp.asarray(values["disk.pa"]))
@@ -1589,8 +1581,10 @@ def _fold_gp_values(ctx, values, degree=None):
     return out
 
 
-def _geometry_starts(p, geo):
-    """Candidate ``(inc, pa)`` starts: the single-ring fit, grid rivals and a lattice."""
+def _geometry_search(p, geo, ell):  # deliberate: test seam: start selection
+    """The start with the lowest frozen-geometry χ²: ``(geometry, fit, rows)``."""
+    n_data = int(p.processed.n_independent)
+    best, rows = None, []
     ctx = p._ctx()
     # the single ring can settle in a wrong mode that the released fit cannot leave
     starts = [(geo["inc"], geo["pa"])]
@@ -1604,14 +1598,7 @@ def _geometry_starts(p, geo):
         for pa in _GEOMETRY_LATTICE_PA
         if inc <= ctx.inc_max
     ]
-    return starts
-
-
-def _geometry_search(p, geo, ell):
-    """The start with the lowest frozen-geometry χ²: ``(geometry, fit, rows)``."""
-    n_data = int(p.processed.n_independent)
-    best, rows = None, []
-    for inc, pa in _geometry_starts(p, geo):
+    for inc, pa in starts:
         trial = {**geo, "inc": float(inc), "pa": float(pa)}
         # a few steps suffice: a wrong geometry costs far more χ² than a right one
         screen, _ = _gp_fit(p, ell, None, geo=trial, max_steps=_SCREEN_STEPS)
@@ -1679,6 +1666,7 @@ def _edge_side(candidates):
     return None
 
 
+# deliberate: named stage: the GP profile of the model registry
 def _profile_gp(p):
     from ..imaging import error_scale
 
@@ -1748,6 +1736,7 @@ def _compare(p):
     return models()[p.name].compare(p)
 
 
+# deliberate: named step: the quadrature-weighted light fraction
 def _light_fraction(model, lo, hi):
     """Fraction of the disks' light (at the reference wavelength) in [lo, hi]."""
     from ..models import MultipoleDisk
@@ -1823,6 +1812,7 @@ def _save_best(p, name):
     return values, model
 
 
+# deliberate: named stage: the rings compare of the model registry
 def _compare_rings(p):
     from ..likelihood import whitened_residuals
 
@@ -1916,6 +1906,7 @@ def _compare_rings(p):
     return report
 
 
+# deliberate: named step: autodiff of a fraction and its flux correlation
 def _inner_stats(model, data, ctx):
     """The disk's light fraction within a half-fringe of ``r_in`` and its flux correlation."""
     import jax
@@ -1950,6 +1941,7 @@ def _inner_stats(model, data, ctx):
     return value, (cross / denom if denom > 0 else None)
 
 
+# deliberate: test seam: evidence spread and profile correlation
 def _stability(p, rows):
     """The evidence spread across ℓ and the smallest correlation between
     the radial profiles of the fits at each ℓ (None when not computable)."""
@@ -1969,7 +1961,7 @@ def _stability(p, rows):
     return spread, float(onp.min(corr))
 
 
-def _render_stats(p, model):
+def _render_stats(p, model):  # deliberate: test seam: the render check
     """χ²/N of the model and of its disk rendered to pixels (None if not computable)."""
     import equinox as eqx
     import jax.numpy as np
@@ -2015,6 +2007,7 @@ def _render_stats(p, model):
     return out
 
 
+# deliberate: named stage: the GP compare of the model registry
 def _compare_gp(p):
     ctx, data = p._ctx(), p.processed
     # The evidences were computed with the fits, on the data they used.
@@ -2210,6 +2203,7 @@ def _plot_summary_file(p, model):
 # === STAGE: POSTERIOR ===
 
 
+# deliberate: test seam: pa folding
 def _fold_pa(samples, pa_site, parity, centre):
     """``pa`` folded to within 90° of ``centre``, the ``parity``-signed harmonics flipped."""
     pa = onp.asarray(samples[pa_site], dtype=float)
@@ -2230,6 +2224,7 @@ def _best_row(compare):
     return next(r for r in compare["rows"] if r["name"] == compare["best"])
 
 
+# deliberate: named step: the posterior model and priors
 def _posterior_setup(p):
     """Model, priors, start, position-angle site and parity of the NUTS run."""
     ctx = p._ctx()
@@ -2384,6 +2379,7 @@ _POSTERIOR_KEYS = (
 )
 
 
+# deliberate: named step: the summary section of the disk
 def _disk_section(name, compare):
     section = {"model": name, "best": compare["best"]}
     if name == "rings":

@@ -9,7 +9,6 @@ refining the analysis by hand.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import sys
@@ -43,7 +42,7 @@ _KERNELSPEC = {
 }
 
 
-def _intro(run):
+def _intro(run):  # deliberate: named notebook cell
     inputs = run["inputs"]
     if inputs["files"]:
         files = "\n".join(
@@ -113,6 +112,7 @@ def _corner_code(sites):
     )
 
 
+# deliberate: one notebook cell; the dispatcher lists them
 def _binary_search_cell(run, summary):
     search, limits = summary["search"], summary["limits"]
     # The curve of the limits stage: same annuli as the saved plot.
@@ -145,6 +145,7 @@ def _binary_search_cell(run, summary):
     )
 
 
+# deliberate: one notebook cell; the dispatcher lists them
 def _binary_fit_cell(summary, posterior, has_data):
     chi2 = summary["chi2"]
     source = "posterior" if posterior else "fit"
@@ -176,7 +177,7 @@ def _binary_fit_cell(summary, posterior, has_data):
     )
 
 
-def _binary_cells(run, summary, path):
+def _binary_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
     cells = []
@@ -210,6 +211,7 @@ def _binary_cells(run, summary, path):
     return cells
 
 
+# deliberate: one notebook cell; the dispatcher lists them
 def _star_result_cell(summary, has_data):
     fit, star = summary["fit"], summary["star"]
     chi2 = ", ".join(
@@ -243,6 +245,7 @@ def _star_result_cell(summary, has_data):
     )
 
 
+# deliberate: one notebook cell; the dispatcher lists them
 def _star_fit_cell(posterior, has_data):
     source = "posterior" if posterior else "fit"
     if posterior:
@@ -271,7 +274,7 @@ def _star_fit_cell(posterior, has_data):
     )
 
 
-def _star_cells(run, summary, path):
+def _star_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
     cells = []
@@ -311,63 +314,6 @@ def _star_cells(run, summary, path):
     return cells
 
 
-def _disk_geometry_cell(summary):
-    geo = summary["geometry"]
-    return (
-        "## Geometry\n\n"
-        "The Δχ² of a single ring over the inclination and position angle "
-        "(clipped), with the inclination uniform in cos *i*. The geometry "
-        "grid has "
-        f"{geo['grid']['n_minima']} local minimum"
-        f"{'' if geo['grid']['n_minima'] == 1 else 's'}; the single-ring fit "
-        f"from the best cell has *i* = {geo['inc_deg']:.4g}° and "
-        f"PA = {geo['pa_deg']:.4g}°.",
-        'display(Image("plots/geometry_grid.png"))',
-    )
-
-
-def _disk_result_cell(summary, has_data):
-    disk, model = summary["disk"], summary["model"]
-    chi2 = ", ".join(f"{v:.3g}" for v in summary["chi2"]["reduced"].values())
-    what = (
-        f"{disk['n_rings']} ring{'' if disk['n_rings'] == 1 else 's'}"
-        if disk["model"] == "rings"
-        else f"a Gaussian-process profile of ℓ = {disk['ell_mas']:.3g} mas"
-    )
-    return (
-        "## Result\n\n"
-        f"The preferred model is {what} (`{disk['best']}`), with χ²/N = "
-        f"{chi2} on the quoted errors over N = "
-        f"{summary['chi2']['n_independent']} independent observables. "
-        "The panels are the model, the disk alone, its radial profile, "
-        "the spectral index, the lopsidedness and the normalized residuals.",
-        "import virgil.pipeline.disk as disk\n\n"
-        "data = res.data()\n"
-        "fig = disk.plot_summary(\n"
-        f"    res.model(), data, r_out_mas={model['r_out_mas']!r},\n"
-        f"    r_in_mas={model['r_in_mas']!r},\n"
-        ")"
-        if has_data
-        else 'display(Image("plots/disk_summary.png"))',
-    )
-
-
-def _disk_posterior_cell(summary):
-    post = summary["posterior"]
-    return (
-        "## Posterior\n\n"
-        f"{_nuts_sentence(post)}, with the geometry released. The scalar sites: median with "
-        "its 16th and 84th percentiles, split R-hat and bulk effective "
-        "sample size.",
-        'for name, row in res.summary["posterior"]["params"].items():\n'
-        "    print(\n"
-        "        f\"{name:>12}: {row['median']:.5g} \"\n"
-        "        f\"[{row['q16']:.5g}, {row['q84']:.5g}]  \"\n"
-        "        f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
-        "    )",
-    )
-
-
 def _disk_cells(run, summary, path):
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
@@ -375,11 +321,64 @@ def _disk_cells(run, summary, path):
     if "overview" in done:
         cells.append(_data_cell(has_data))
     if "geometry" in done:
-        cells.append(_disk_geometry_cell(summary))
+        geo = summary["geometry"]
+        cells.append(
+            (
+                "## Geometry\n\n"
+                "The Δχ² of a single ring over the inclination and position "
+                "angle (clipped), with the inclination uniform in cos *i*. "
+                "The geometry grid has "
+                f"{geo['grid']['n_minima']} local minimum"
+                f"{'' if geo['grid']['n_minima'] == 1 else 's'}; the "
+                f"single-ring fit from the best cell has *i* = "
+                f"{geo['inc_deg']:.4g}° and PA = {geo['pa_deg']:.4g}°.",
+                'display(Image("plots/geometry_grid.png"))',
+            )
+        )
     if "compare" in done:
-        cells.append(_disk_result_cell(summary, has_data))
+        disk, model = summary["disk"], summary["model"]
+        chi2 = ", ".join(
+            f"{v:.3g}" for v in summary["chi2"]["reduced"].values()
+        )
+        what = (
+            f"{disk['n_rings']} ring{'' if disk['n_rings'] == 1 else 's'}"
+            if disk["model"] == "rings"
+            else f"a Gaussian-process profile of ℓ = {disk['ell_mas']:.3g} mas"
+        )
+        cells.append(
+            (
+                "## Result\n\n"
+                f"The preferred model is {what} (`{disk['best']}`), with "
+                f"χ²/N = {chi2} on the quoted errors over N = "
+                f"{summary['chi2']['n_independent']} independent observables. "
+                "The panels are the model, the disk alone, its radial "
+                "profile, the spectral index, the lopsidedness and the "
+                "normalized residuals.",
+                "import virgil.pipeline.disk as disk\n\n"
+                "data = res.data()\n"
+                "fig = disk.plot_summary(\n"
+                f"    res.model(), data, r_out_mas={model['r_out_mas']!r},\n"
+                f"    r_in_mas={model['r_in_mas']!r},\n"
+                ")"
+                if has_data
+                else 'display(Image("plots/disk_summary.png"))',
+            )
+        )
     if "posterior" in done and "posterior" in summary:
-        cells.append(_disk_posterior_cell(summary))
+        cells.append(
+            (
+                "## Posterior\n\n"
+                f"{_nuts_sentence(summary['posterior'])}, with the geometry "
+                "released. The scalar sites: median with its 16th and 84th "
+                "percentiles, split R-hat and bulk effective sample size.",
+                'for name, row in res.summary["posterior"]["params"].items():\n'
+                "    print(\n"
+                "        f\"{name:>12}: {row['median']:.5g} \"\n"
+                "        f\"[{row['q16']:.5g}, {row['q84']:.5g}]  \"\n"
+                "        f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
+                "    )",
+            )
+        )
     return cells
 
 
@@ -392,7 +391,7 @@ _IMAGE_CAVEAT = (
 )
 
 
-def _image_cells(run, summary, path):
+def _image_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     cells = []
     if "overview" in done:
@@ -416,20 +415,7 @@ def _image_cells(run, summary, path):
     return cells
 
 
-def _robust_sentence(modes):
-    """What dropping the most outlying night does to the verdict."""
-    r = modes.get("robustness", {"skipped": "not run (older run)"})
-    if "skipped" in r:
-        return f"The night-dropped refit was skipped ({r['skipped']})."
-    d = r["dropped"]
-    band = "the same alias band" if d["same_band"] else "another alias band"
-    return (
-        f"Without night {r['night']} (raw χ²/N = {r['chi2_per_n']:.3g}) the "
-        f"verdict is {d['verdict']} in {band} (N = {d['n']})."
-    )
-
-
-def _orbit_cells(run, summary, path):
+def _orbit_cells(run, summary, path):  # deliberate: dispatch-table callable
     done = _completed(run)
     cells = []
     if "epochs" in done:
@@ -462,6 +448,22 @@ def _orbit_cells(run, summary, path):
         modes = summary["modes"]
         win, null = modes["winner"], modes["no_orbit"]
         gap = modes["delta_log_z"]
+        # what dropping the most outlying night does to the verdict
+        r = modes.get("robustness", {"skipped": "not run (older run)"})
+        if "skipped" in r:
+            robust = f"The night-dropped refit was skipped ({r['skipped']})."
+        else:
+            d = r["dropped"]
+            band = (
+                "the same alias band"
+                if d["same_band"]
+                else "another alias band"
+            )
+            robust = (
+                f"Without night {r['night']} (raw χ²/N = "
+                f"{r['chi2_per_n']:.3g}) the verdict is {d['verdict']} in "
+                f"{band} (N = {d['n']})."
+            )
         margin = (
             "there is no other band"
             if gap is None
@@ -473,7 +475,7 @@ def _orbit_cells(run, summary, path):
                 f"The winner is the band of N = {win['n']} orbits "
                 f"(probability {win['p']:.3g}); {margin}. Against a single "
                 f"star it gains {null['delta_log_z']:.4g} nats "
-                f"(verdict: {null['verdict']}). {_robust_sentence(modes)} "
+                f"(verdict: {null['verdict']}). {robust} "
                 "The sky plot shows the best "
                 "orbit, each night's position and error ellipse (hollow if "
                 "flagged), and the orbit at the nights.",
@@ -559,17 +561,6 @@ def build_notebook(path):
     return nb
 
 
-@contextlib.contextmanager
-def _without_mplbackend():
-    """Unset ``MPLBACKEND`` (``Agg`` in batch jobs embeds no figures)."""
-    saved = os.environ.pop("MPLBACKEND", None)
-    try:
-        yield
-    finally:
-        if saved is not None:
-            os.environ["MPLBACKEND"] = saved
-
-
 # The quicklook is light: the kernel runs on the CPU, so it neither fights
 # the parent process for the GPU nor preallocates its memory.
 _KERNEL_ENV = {
@@ -591,7 +582,7 @@ def execute_notebook(nb, path, timeout=600):
     from jupyter_client.manager import KernelManager
 
     name = "virgil-pipeline"
-    with tempfile.TemporaryDirectory() as tmp, _without_mplbackend():
+    with tempfile.TemporaryDirectory() as tmp:
         kernel_dir = Path(tmp) / name
         kernel_dir.mkdir()
         (kernel_dir / "kernel.json").write_text(
@@ -620,7 +611,9 @@ def execute_notebook(nb, path, timeout=600):
             timeout=timeout,
             resources={"metadata": {"path": str(path)}},
         )
-        env = {**os.environ, **_KERNEL_ENV}
+        # MPLBACKEND=Agg (batch jobs) would embed no figures in the notebook
+        env = {k: v for k, v in os.environ.items() if k != "MPLBACKEND"}
+        env.update(_KERNEL_ENV)
         with open(Path(path) / "quicklook.log", "wb") as log:
             client.execute(env=env, stderr=log)
     nb.metadata["kernelspec"] = _KERNELSPEC
