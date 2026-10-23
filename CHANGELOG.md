@@ -9,7 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- The Gl 229 period-alias search is no longer a release gate (0.4.1 was the last release it gated). The alias-finding regressions are guarded by CI tests, and a pull request touching `arcs.py`, `tempering`-related tests or `pipeline/orbit.py` now also runs the orbit slow tests.
+- The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
 
 ## 0.4.1 (2026-10-23)
 
