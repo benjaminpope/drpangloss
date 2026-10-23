@@ -1203,6 +1203,7 @@ Provisional in 0.4:
   `smoothed` option of the regularizers;
 - `virgil.crossval`;
 - `virgil.fitting.gauss_newton_diag` and the `precondition` argument of `fit`;
+- `virgil.plotting.plot_field_draws`;
 - the module `virgil.radio` (new: complex visibilities from CASA measurement
   sets with per-observation calibration nuisances; instrument-neutral, with
   the spectral-index prior `Uniform(0, 5)` and the data-derived reference

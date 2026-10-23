@@ -90,6 +90,7 @@
  "tests/test_pipeline_robust_star.py": 56.9,
  "tests/test_pipeline_star.py": 207.6,
  "tests/test_pipeline_start_at_bound.py": 42.5,
+ "tests/test_plot_field_draws.py": 3.0,
  "tests/test_plotting_detection.py": 0.8,
  "tests/test_priors.py": 11.2,
  "tests/test_radial_gp.py": 91.7,

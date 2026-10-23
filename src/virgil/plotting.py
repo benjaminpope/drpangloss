@@ -31,6 +31,8 @@ from ._utils import is_flux_param, resolve_flux_param
 from .fields import GaussianField, MultipoleField
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
 
+__provisional__ = ("plot_field_draws",)
+
 
 def _require_plots_extra(module):
     """Import an optional plotting dependency, or explain how to get it."""
@@ -1883,6 +1885,9 @@ def plot_field_draws(
 ):
     r"""Draws from a Gaussian-process image prior or posterior, with cuts.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Three draws (``abc``) above cuts through many of them (``ddd``), one
     in bold. Posterior draws are unit-sum images on a shared colour scale;
     prior draws are scaled to unit peak.
@@ -1909,14 +1914,15 @@ def plot_field_draws(
         the centre at the position angles ``axes_pa``. ``"multipole"``: the
         cosine amplitudes ``a_m(r)``, ``m = 0..mmax``, of
         ``η = Σ a_m cos mθ + b_m sin mθ`` (FFT of
-        ``MultipoleField.polar_values`` along θ; ``a_0`` is the mean) against
+        ``MultipoleField.polar_values`` along θ, the residual without ``mean``;
+        ``a_0`` is the azimuthal mean) against
         disk-plane radius, one offset track per ``m``. Default
         ``"multipole"`` for a MultipoleField, ``"principal"`` for a
         GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
         ``(PA in degrees North through East, label)`` per ``"axes"`` cut.
     truth : array-like, shape (nrow, ncol), optional
-        True image: dashed in the cuts, and the reference peak.
+        True image (posterior only): dashed in the cuts, and the reference peak.
     snr : bool, optional
         Posterior only. Panel c shows the posterior mean over standard
         deviation of each pixel's brightness (grey where there is no spread).
@@ -2043,6 +2049,8 @@ def plot_field_draws(
     d = ax["d"]
     nfaint = max(n_cuts, 0)
     if truth is not None:
+        if not posterior:
+            raise ValueError("truth is for posterior input.")
         truth = onp.asarray(truth, dtype=float)
         truth = truth / truth.sum()
     if posterior or cuts == "axes":
@@ -2064,9 +2072,12 @@ def plot_field_draws(
         )
         coef = onp.fft.rfft(polar, axis=2) * 2 / polar.shape[2]
         coef[:, :, 0] *= 0.5
+        top = polar.shape[2] // 2
+        if polar.shape[2] % 2 == 0:
+            coef[:, :, top] *= 0.5  # the Nyquist bin is real, like m = 0
         r = field.r_min_mas + field.spacing * onp.arange(polar.shape[1])
         step = 2.5 * float(onp.max(onp.asarray(field.sigma)))
-        for m in range(min(mmax, polar.shape[2] // 2) + 1):
+        for m in range(min(mmax, top) + 1):
             off = -step * m
             c = coef[:, :, m].real + off
             _draw_cuts(d, [((r, c), f"C{m}", None)], nfaint)
@@ -2085,7 +2096,7 @@ def plot_field_draws(
         d.set_ylabel("amplitude of η (offset by m)")
     else:
         if cuts == "principal":
-            vals = level(etas if etas is not None else imgs)
+            vals = level(etas if etas is not None and not posterior else imgs)
             s_row = (nrow / 2 - 0.5 - onp.arange(nrow)) * h
             s_col = (ncol / 2 - 0.5 - onp.arange(ncol)) * h
             curves = [

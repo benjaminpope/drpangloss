@@ -89,3 +89,60 @@ def test_errors():
         plot_field_draws(_gp(), 0.5, KEY, n=4, snr=True)
     with pytest.raises(ValueError, match="field or images"):
         plot_field_draws(pixel_scale_mas=0.5)
+
+
+def _bold(ax, colour):
+    return next(
+        line
+        for line in ax.get_lines()
+        if line.get_linewidth() == 1.8 and line.get_color() == colour
+    )
+
+
+def test_cut_orientation():
+    from virgil.plotting import _cut
+
+    s = onp.arange(-8.0, 9.0)
+    north, east = onp.zeros((21, 21)), onp.zeros((21, 21))
+    north[7, 10] = 1.0  # 3 pixels North of the centre
+    east[10, 6] = 1.0  # 4 pixels East of the centre
+    assert s[onp.argmax(_cut(north, 0.0, 1.0, s))] == 3.0
+    assert s[onp.argmax(_cut(east, 90.0, 1.0, s))] == 4.0
+
+
+def test_multipole_harmonic_track(monkeypatch):
+    field = _mp()
+    theta = np.linspace(0.0, 2 * np.pi, field.shape[1], endpoint=False)
+    amp = 0.7
+    monkeypatch.setattr(
+        MultipoleField,
+        "polar_values",
+        lambda self: amp
+        * np.cos(2 * theta)[None, :]
+        * np.ones((field.shape[0], 1)),
+    )
+    _, ax = plot_field_draws(field, 1.0, KEY, n=4, mmax=3, n_cuts=0)
+    step = 2.5 * float(field.sigma)
+    for m, expected in enumerate((0.0, 0.0, amp, 0.0)):
+        y = _bold(ax["d"], f"C{m}").get_ydata()
+        onp.testing.assert_allclose(y, expected - step * m, atol=1e-6)
+
+
+def test_posterior_principal_cut_is_log_brightness():
+    field = _gp()
+    z = jax.random.normal(KEY, (4, 16, 16))
+    _, ax = plot_field_draws(field, 0.5, latents=z, n_cuts=0)
+    img = onp.exp(
+        onp.asarray(
+            field.__class__(z[0], field.sigma, field.length_mas).evaluate(0.5)
+        )
+    )
+    expected = onp.log10(onp.maximum(img[:, 8] / img.max(), 1e-3))
+    onp.testing.assert_allclose(
+        _bold(ax["d"], "C0").get_ydata(), expected, atol=1e-5
+    )
+
+
+def test_truth_needs_posterior():
+    with pytest.raises(ValueError, match="truth"):
+        plot_field_draws(_gp(), 0.5, KEY, n=4, truth=onp.ones((16, 16)))
