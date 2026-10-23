@@ -139,6 +139,7 @@ def test_candidate_batch_is_64_for_plain_data_and_shares_the_budget():
     assert _candidate_batch(None, 2**22, [plain, gained], [sp, sg]) == one
 
 
+@pytest.mark.slow  # ~50 s of compiling on an idle laptop, 70-80 s in CI
 def test_hessian_groups_shrink_with_the_budget_and_sum_to_the_fused_one():
     from virgil.aliases import _hessian_groups, _Problem
 
