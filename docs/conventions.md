@@ -281,7 +281,21 @@ An [`Image`][virgil.models.Image] (and the `FlaredDisk` family) computes visibil
 An image fit with a weak penalty (maximum entropy at a small weight) is badly conditioned: the faint pixels are almost unconstrained, so L-BFGS takes many tiny steps along them. `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal of the Gauss–Newton curvature ([`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and Adam. The optimum is the same. In the two L-curves measured it took 30–40% fewer steps in total (more at a tight `gtol`), and at the weakest weight it sometimes converges where the plain fit reaches the step limit. LM already uses JᵀJ and ignores it. The option is provisional (see [stability](stability.md)).
 
 ```python
-result = fit(start, image_priors(start), data, MaxEntropy(10.0, path="env"), precondition="diag")
+import jax
+import jax.numpy as jnp
+
+from virgil.coverage import ami_grid_record
+from virgil.fitting import fit
+from virgil.imaging import MaxEntropy, image_priors
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.scenes import gaussian_blob
+
+truth = System(star=PointSource(), env=Image.from_brightness(gaussian_blob(16, 12.0, 25.0, dra=20.0), 12.0, flux=0.1))
+data = OIData(ami_grid_record(pitch_m=0.5)).with_model(truth, key=jax.random.PRNGKey(1))
+start = System(star=PointSource(), env=Image(jnp.zeros((16, 16)), 12.0, flux=0.1))
+
+result = fit(start, image_priors(start), data, [MaxEntropy(10.0, path="env")], precondition="diag")
 result.info["precondition_rounds"]
 ```
 

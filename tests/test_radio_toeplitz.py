@@ -408,11 +408,20 @@ def test_fit_reaches_the_direct_optimum():
     assert a.info["ndata"] == b.info["ndata"]
     for k in b.values:
         assert _relative(a.values[k], b.values[k]) < 1e-4
+    # deliberate: only stationary quantities (loss, χ²) are held to 1e-10
+    # across the two optimiser paths. The two terms sum in different orders, so
+    # L-BFGS stops at points that differ at round-off; the profiled sigma
+    # moves at first order in that offset (2.5e-8 on some runner CPUs, #528).
     onp.testing.assert_allclose(
         a.info["derived"]["cal.sigma"],
         b.info["derived"]["cal.sigma"],
-        rtol=1e-8,
+        rtol=1e-6,
     )
+    # At the same parameters the terms' sigma must agree tightly.
+    tdata, nuis, scene, *_ = problem
+    same = tdata.term(scene, nuis).derived(a.values)["cal.sigma"]
+    direct = tdata.direct_term(scene, nuis).derived(a.values)["cal.sigma"]
+    onp.testing.assert_allclose(same, direct, rtol=1e-12)
 
 
 @pytest.mark.slow
