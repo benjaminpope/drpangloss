@@ -17,6 +17,7 @@ to the left and North up. Importing this module leaves matplotlib's global
 settings alone; [`set_style`][virgil.plotting.set_style] opts in to the virgil look.
 """
 
+import contextlib
 import functools
 
 import matplotlib
@@ -64,19 +65,27 @@ def set_style():
     matplotlib.rcParams.update(STYLE)
 
 
+# deliberate: used outside src (notebooks/radio_clean.ipynb); restores only its own
+# keys, since ``plt.rc_context`` would restore ``backend`` and close Jupyter's open figures
+@contextlib.contextmanager
+def _style_context(style=None):
+    """Temporarily apply ``style`` (default: the virgil style)."""
+    style = STYLE if style is None else style
+    saved = {key: matplotlib.rcParams[key] for key in style}
+    matplotlib.rcParams.update(style)
+    try:
+        yield
+    finally:
+        matplotlib.rcParams.update(saved)
+
+
 def _styled(fn):
     """Run ``fn`` with the virgil style applied."""
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        # deliberate: restore only our own keys; ``plt.rc_context`` would restore
-        # ``backend`` too, which closes Jupyter's open figures
-        saved = {key: matplotlib.rcParams[key] for key in STYLE}
-        matplotlib.rcParams.update(STYLE)
-        try:
+        with _style_context():
             return fn(*args, **kwargs)
-        finally:
-            matplotlib.rcParams.update(saved)
 
     return wrapper
 
@@ -1869,12 +1878,13 @@ def plot_field_draws(
         Prior draws (default 100).
     cuts : {"principal", "axes", "multipole"}, optional
         Panel d. ``"principal"``: the central row and column of a
-        GaussianField. ``"axes"``: lines through the centre at ``axes_pa``.
-        ``"multipole"``: the cosine amplitudes ``a_m(r)``, ``m = 0..mmax``,
-        against disk-plane radius (``a_0`` the azimuthal mean), one offset
-        track per ``m``; for a MultipoleDisk, ``ln I₀ - μ`` and the
-        coefficients ``c_m(r)`` of ``I/I₀``. Default: ``"multipole"`` for a
-        MultipoleField or disk, ``"principal"`` for a GaussianField, ``"axes"``
+        GaussianField. ``"axes"``: lines through the centre at the position
+        angles ``axes_pa``. ``"multipole"``: the cosine amplitudes ``a_m(r)``,
+        ``m = 0..mmax``, of ``η = Σ a_m cos mθ + b_m sin mθ`` (the residual
+        without ``mean``; ``a_0`` is the azimuthal mean) against disk-plane
+        radius, one offset track per ``m``. For a MultipoleDisk, ``ln I₀ - μ``
+        and the cosine coefficients ``c_m(r)`` of ``I/I₀``. Default:
+        ``"multipole"`` for a MultipoleField or disk, ``"principal"`` for a GaussianField, ``"axes"``
         for images.
     axes_pa : sequence of (float, str), optional
         ``(PA in degrees, label)``, North through East, per ``"axes"`` cut.
