@@ -42,6 +42,10 @@ anything before 1.0 may change between minor versions.
   (`bool(1)`), and a float now fixes it. Pass `alpha=True` to fit or
   `alpha=1.0` to fix; `alpha=0` still gives α = 0.
 
+### Changed
+
+- The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
+
 ## 0.4.1 (2026-10-23)
 
 0.4.1 is a consolidation release. It adds no new model families. It makes the
