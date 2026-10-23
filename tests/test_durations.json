@@ -98,6 +98,7 @@
  "tests/test_radio.py": 38.0,
  "tests/test_radio_clean.py": 9.7,
  "tests/test_radio_conditioning.py": 31.2,
+ "tests/test_radio_toeplitz.py": 20.0,
  "tests/test_regressions.py": 25.9,
  "tests/test_release_correctness.py": 4.5,
  "tests/test_sampler_flat_coordinates.py": 27.3,

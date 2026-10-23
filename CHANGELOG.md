@@ -7,6 +7,41 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`virgil.radio_toeplitz`** (provisional): `ComplexVisData.toeplitz`
+  precomputes the dirty beams and images of a one-`Image` radio fit, after
+  Fessler et al. (2005). Its `term` gives the loss, gradient, profiled `ŝ` and
+  `derived` of `ComplexVisData.term` at a cost independent of the number of
+  visibilities. See [Toeplitz χ²](docs/radio_interferometry.md#toeplitz-chi2).
+  - Supported: per-observation gains, flux, taper, smoothing, a mask, and
+    fixed, fitted or profiled error scales; float64 only. The template's
+    fixed `dra`, `ddec` (such as a half-pixel map convention) are folded into
+    the visibilities at the precompute.
+  - Refused: antenna gains, a fitted spectral index and other components.
+  - `crosscheck` compares it with the direct term (about 1e-13 of the loss).
+    `rebuild` repeats the precompute for new weights without recompiling.
+  - Extension, opt-in: `offsets="spread"` fits the per-observation offsets
+    by evaluating the stored nufftax spread grids (nufftax ≥ 0.6.1) at
+    shifted positions. This is a type-3 evaluation (Lee & Greengard 2005;
+    Barnett et al. 2019); we know of no prior use of this combination. It
+    refuses baselines past the kernel's Nyquist margin. Tests:
+    `test_matches_direct_term`, `test_matches_direct_term_at_scale`,
+    `test_refuses_what_it_cannot_do`, `test_runtime_checks` and
+    `test_spread_grid_against_nufftax_and_direct_sums`.
+- `CalibrationNuisance(alpha=<float>)` fixes the spectral index at that value.
+- `ComplexVisData.chi2_by_ddid` takes `chunk_size` (that of `term`).
+- `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
+  residual vector). L-BFGS and Adam use them; LM and the Gauss–Newton
+  covariance raise `NoLeastSquaresForm`; `precondition="diag"` takes their
+  Gauss–Newton diagonal through `curvature_params` and `curvature_loss`.
+
+### Changes to default behaviour
+
+- `CalibrationNuisance(alpha=1)` (a non-zero integer) raises. It used to fit α
+  (`bool(1)`), and a float now fixes it. Pass `alpha=True` to fit or
+  `alpha=1.0` to fix; `alpha=0` still gives α = 0.
+
 ### Changed
 
 - The release checklist no longer requires a mutation-testing kill rate.
