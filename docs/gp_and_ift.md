@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED FROM notebooks/gp_and_ift.ipynb by scripts/sync_tutorial_docs.py. -->
 # Gaussian-process priors and information field theory
 
 virgil's Gaussian-process (GP) image prior, [`GaussianField`][virgil.fields.GaussianField], takes its main ideas from information field theory (IFT), developed by Torsten Enßlin's group and implemented in their package NIFTy. IFT casts Bayesian inference on fields in the language of statistical field theory (Hamiltonian, propagator, source, free energy), which connects it to physics methods such as perturbation theory and extends naturally to non-Gaussian, nonlinear problems. For Gaussian priors, though, many of its objects are those of Gaussian-process regression under other names (e.g. Rasmussen & Williams 2006), and a reader fluent in one vocabulary can struggle to recognize the same ideas in the other. This page translates between them, for readers who know GPs and want to follow the IFT papers, and for those who met IFT first. It covers:
@@ -35,6 +36,63 @@ The covariance Σ is **approximately stationary**: away from the edges, the cova
 - **ℓ** (`length_mas`) is the correlation length in milliarcseconds. Pixels much closer than ℓ brighten and fade together; pixels much farther apart vary independently.
 
 The kernel is close to Matérn (the next section explains the difference). ℓ is the Matérn length scale 1/κ, not the separation at which the correlation falls to 1/e: for the default `order=2`, the continuum correlation is about 0.6 at ℓ, 0.3 at 2ℓ and 0.1 at 3ℓ. A prior with ℓ below the interferometer's resolution allows structure the data cannot constrain; the evidence (below) decides.
+
+Here is what that means for images. Each figure shows three draws from the prior, with σ = 1 and no template, and below them cuts through a hundred draws of η along the central column and row (draw 1 in bold).
+
+??? note "Imports and setup"
+
+    ```python
+    import sys
+    from pathlib import Path
+
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+
+    repo_root = Path.cwd()
+    if not (repo_root / "src").exists():
+        repo_root = repo_root.parent
+    if str(repo_root / "src") not in sys.path:
+        sys.path.insert(0, str(repo_root / "src"))
+
+    from virgil.fields import GaussianField
+    from virgil.plotting import plot_field_draws
+
+    # Prior draws on a 64 x 64 grid of 0.5 mas pixels, all from the same latents z.
+    h, key = 0.5, jax.random.PRNGKey(0)
+
+
+    def prior(length_mas, order=2):
+        return GaussianField(
+            jnp.zeros((64, 64)), sigma=1.0, length_mas=length_mas, order=order
+        )
+    ```
+
+```python
+for length in (1.0, 6.0):
+    plot_field_draws(prior(length), h, key, title=rf"σ = 1, $\ell$ = {length:g} mas")
+    plt.show()
+```
+
+![gp_and_ift output 3.1](generated/gp_and_ift_cell003_out01.png)
+
+![gp_and_ift output 3.2](generated/gp_and_ift_cell003_out02.png)
+
+The two figures share their latents z, so the bright patches sit in the same places. At ℓ = 1 mas the image is mottled pixel to pixel; at ℓ = 6 mas it is a few broad patches and the cuts wander slowly. The brightest patches often lie at the edges, where the reflecting boundary (below) raises the variance.
+
+ℓ can also be a pair, `(ℓ_row, ℓ_col)`: correlated over ℓ_row down each column and over ℓ_col along each row.
+
+```python
+plot_field_draws(
+    prior(jnp.array([8.0, 1.5])), h, key,
+    title=r"σ = 1, ($\ell_\mathrm{row}$, $\ell_\mathrm{col}$) = (8, 1.5) mas",
+)
+plt.show()
+```
+
+![gp_and_ift output 5.1](generated/gp_and_ift_cell005_out01.png)
+
+The draws are streaks running north–south, and the cut along the vertical axis is smoother than the cut along the horizontal.
 
 ### Computing with it
 
@@ -145,6 +203,20 @@ This is the link between Matérn kernels and GMRFs found by Lindgren, Rue & Lind
 $$(\kappa^2 - \nabla^2)^{\mathrm{order}/2}\, \eta = \text{white noise},$$
 
 and discretizing it on a grid gives a sparse GMRF. The smoothness parameter is ν = order − d/2 with d = 2, so the default `order=2` gives ν = 1. `order=1` gives ν = 0, an edge case: in the continuum such a field has infinite variance at every point, growing logarithmically as the pixels shrink. virgil's σ normalization hides this, at the price that the correlation at a fixed separation then depends on the pixel size as well as on ℓ.
+
+Raising `order` makes the field smoother at the same ℓ: its spectrum falls faster above the knot, so less fine structure survives.
+
+```python
+for order in (2, 3):
+    plot_field_draws(prior(3.0, order), h, key, title=rf"σ = 1, $\ell$ = 3 mas, order = {order}")
+    plt.show()
+```
+
+![gp_and_ift output 8.1](generated/gp_and_ift_cell008_out01.png)
+
+![gp_and_ift output 8.2](generated/gp_and_ift_cell008_out02.png)
+
+With `order=2` (ν = 1) the cuts are continuous but jagged on the pixel scale; with `order=3` (ν = 2) they are smooth curves, and the same patches become rounder and broader.
 
 ## A dictionary of IFT terms
 
