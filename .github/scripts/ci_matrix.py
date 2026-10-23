@@ -35,10 +35,10 @@ import subprocess
 # (tests/conftest.py, VIRGIL_SLOW_FILES).
 ORBIT_PATHS = re.compile(
     r"^(src/virgil/(aliases|arcs|epochs|orbit[a-z_]*|likelihood|tempering|_marginal|_precision|pipeline/(disk|image|orbit))"
-    r"|tests/test_(aliases|arcs|epochs|orbit[a-z_]*|tempering|pipeline_(disk|image|orbit[a-z_]*)))\.py$"
+    r"|tests/test_(aliases|arcs|epochs|epoch_coarse|orbit[a-z_]*|tempering|pipeline_(disk|image|orbit[a-z_]*)))\.py$"
 )
 ORBIT_SLOW_FILES = (
-    "test_aliases.py test_arcs.py test_epochs.py test_orbit*.py test_tempering.py "
+    "test_aliases.py test_arcs.py test_epochs.py test_epoch_coarse.py test_orbit*.py test_tempering.py "
     "test_pipeline_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
 )
 
