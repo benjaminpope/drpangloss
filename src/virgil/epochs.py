@@ -153,7 +153,44 @@ class Epochs:
         self.epoch_of = tuple(epoch_of)
         self.data = tuple(data)
         self.at = at
-        self.times, self.spread_days = self._snapshot_times(times or {})
+        given = times or {}
+        # Each dataset's snapshot time and the spread of its samples about it.
+        unknown = set(given) - set(self.names) - set(self.dataset_names)
+        if unknown:
+            raise ValueError(f"times for unknown names: {sorted(unknown)}.")
+        own = []
+        for name, d in zip(self.dataset_names, self.data):
+            mjd = getattr(d, "mjd", None)
+            own.append(None if mjd is None else onp.asarray(mjd, onp.float64))
+        snap = onp.empty(len(self.data))
+        for k, (name, epoch) in enumerate(
+            zip(self.dataset_names, self.epoch_of)
+        ):
+            if name in given:
+                snap[k] = given[name]
+            elif epoch in given:
+                snap[k] = given[epoch]
+            elif own[k] is None:
+                raise ValueError(
+                    f"Dataset {name!r} has no times: read it from OIFITS, "
+                    "give mjd per sample, or pass times={name: mjd}."
+                )
+            elif self.at == "dataset":
+                snap[k] = own[k].mean()
+            else:
+                together = [
+                    own[j]
+                    for j, e in enumerate(self.epoch_of)
+                    if e == epoch and own[j] is not None
+                ]
+                snap[k] = onp.concatenate(together).mean()
+        spread = onp.array(
+            [
+                0.0 if t is None else float(onp.max(onp.abs(t - snap[k])))
+                for k, t in enumerate(own)
+            ]
+        )
+        self.times, self.spread_days = snap, spread
 
     def __len__(self):
         return len(self.data)
@@ -163,45 +200,6 @@ class Epochs:
             f"Epochs({len(self.names)} epochs, {len(self.data)} datasets, "
             f"at={self.at!r})"
         )
-
-    def _snapshot_times(self, given):  # deliberate: a named step of __init__
-        """Snapshot time and spread of each dataset."""
-        unknown = set(given) - set(self.names) - set(self.dataset_names)
-        if unknown:
-            raise ValueError(f"times for unknown names: {sorted(unknown)}.")
-        own = []
-        for name, d in zip(self.dataset_names, self.data):
-            mjd = getattr(d, "mjd", None)
-            own.append(None if mjd is None else onp.asarray(mjd, onp.float64))
-        times = onp.empty(len(self.data))
-        for k, (name, epoch) in enumerate(
-            zip(self.dataset_names, self.epoch_of)
-        ):
-            if name in given:
-                times[k] = given[name]
-            elif epoch in given:
-                times[k] = given[epoch]
-            elif own[k] is None:
-                raise ValueError(
-                    f"Dataset {name!r} has no times: read it from OIFITS, "
-                    "give mjd per sample, or pass times={name: mjd}."
-                )
-            elif self.at == "dataset":
-                times[k] = own[k].mean()
-            else:
-                together = [
-                    own[j]
-                    for j, e in enumerate(self.epoch_of)
-                    if e == epoch and own[j] is not None
-                ]
-                times[k] = onp.concatenate(together).mean()
-        spread = onp.array(
-            [
-                0.0 if t is None else float(onp.max(onp.abs(t - times[k])))
-                for k, t in enumerate(own)
-            ]
-        )
-        return times, spread
 
     @property
     def resolution_mas(self):
@@ -336,7 +334,7 @@ class Epochs:
 # ---------------------------------------------------------------------------
 
 
-def _orbit_list(orbits):
+def _orbit_list(orbits):  # deliberate: imported by orbit_search.py
     """A list of orbits from a list, ``starting_orbits`` pairs, a
     ``RankedOrbits`` or one orbit with a leading batch axis."""
     if isinstance(orbits, (list, tuple, RankedOrbits)):
@@ -367,7 +365,7 @@ def _stack(trees, what="orbits"):
         ) from None
 
 
-def _blocks(data):  # deliberate: a named step of _Surface.__init__
+def _blocks(data):  # deliberate: used by pipeline/_common.py
     """The observable blocks of ``data``'s whitened residuals, each with
     its own error scale: ``(name, start, stop, ν, von_mises)``.
 
@@ -422,7 +420,9 @@ def _check_dof(dof):
     return dof
 
 
-def _refuse_amp_with_gains(data):  # deliberate: test seam
+def _refuse_amp_with_gains(
+    data,
+):  # deliberate: imported by aliases.py; unit-tested
     """Raise if ``data`` carry gains and a V² amplitude is requested: the
     amplitude profile rebuilds the model as ``obs + r·err``, valid only for
     diagonal errors, and the gains supersede a per-night amplitude."""
@@ -516,7 +516,7 @@ class _Surface:
         """The blocks' χ² at s = 1 of what ``chi2`` returned."""
         return chi2[..., 0] if chi2.ndim > 1 else chi2
 
-    def _table(self, model, data, noise, dof=None):  # deliberate: the table
+    def _table(self, model, data, noise, dof=None):  # deliberate: 60 lines
         """Per block ``[χ²(1) | ln s | χ² | log norm | log weight]`` (the
         last four at ``_N_NODES`` nodes), by whitening the data with the
         errors times each node's s."""
@@ -823,7 +823,7 @@ def _check_scales(scales):
 
 def _orbit_batch_size(
     batch_size, datasets, n, per_candidate=1
-):  # deliberate: test seam
+):  # deliberate: imported by orbit_search.py; unit-tested
     """Candidates per vectorized batch of a ``lax.map`` over ``n`` of them.
 
     ``lax.map`` without a ``batch_size`` is a serial loop, several times
@@ -887,7 +887,9 @@ def _ident(x):
 
 
 @functools.partial(jax.jit, static_argnames=("static",))
-def _loglike_kernel(static, inputs, datasets, dofs):
+def _loglike_kernel(
+    static, inputs, datasets, dofs
+):  # deliberate: jit boundary, compile-once
     """One compile per layout: the data and the dofs are traced."""
     p = static.payload
 
@@ -1085,7 +1087,7 @@ def rank_orbits(
     batch_size : int, optional
         Orbits evaluated together (default about a million model visibilities).
     dtype : {"float64", "float32"}, optional
-        Precision of the evaluation.
+        Precision.
 
     Returns
     -------
@@ -1108,7 +1110,9 @@ def rank_orbits(
     return _ranked(listed, loglike, data)
 
 
-def _distinct_tracks(tracks, min_distance_mas, n=None):
+def _distinct_tracks(
+    tracks, min_distance_mas, n=None
+):  # deliberate: imported by aliases.py
     """Indices of up to ``n`` of ``tracks`` (each ``(times, 2)``, best
     first) that differ from every better choice by more than
     ``min_distance_mas`` at some time."""
@@ -1239,8 +1243,8 @@ class EpochPositions:
     """The companion's position in each dataset, from
     [`epoch_positions`][virgil.epochs.epoch_positions].
 
-    Positions, covariances and ``gap_marginal`` come from the
-    scale-marginalized surface, so scaling the quoted errors leaves them unchanged.
+    Positions, covariances and ``gap_marginal`` come from the marginal
+    surface, so scaling the quoted errors leaves them unchanged.
 
     Attributes
     ----------
@@ -1268,7 +1272,7 @@ class EpochPositions:
         Log mean likelihood over the search grid and its axes, for
         ``broad_loglike``; None if not from a grid.
     exact_fraction : tuple of float or None
-        Fraction of grid points scored with the full scale integral.
+        Fraction of grid points scored exactly.
     """
 
     names: tuple
@@ -1616,7 +1620,9 @@ def _check_n_peaks(n_peaks):
         )
 
 
-def _grid_peaks(score, xx, yy, rival, n_peaks):  # deliberate: test seam
+def _grid_peaks(
+    score, xx, yy, rival, n_peaks
+):  # deliberate: unit-tested on synthetic grids; the caller is a 400-line loop
     """The ``(i, j, k)`` cells of up to ``n_peaks`` local maxima of a
     (dra, ddec, flux) grid of scores, highest first, each more than
     ``rival`` from every higher one (k is the best flux there)."""
@@ -1646,7 +1652,7 @@ def _grid_peaks(score, xx, yy, rival, n_peaks):  # deliberate: test seam
 
 def _rank_peaks(
     grid_points, grid_marginal, refine, score, rival
-):  # deliberate: test seam
+):  # deliberate: unit-tested with stub refine/score; the caller is a 400-line loop
     """Refine each grid peak and rank the peaks by their marginal score.
 
     ``refine(x0)`` returns a refined point and its marginal score, kept
@@ -1678,7 +1684,9 @@ def _rank_peaks(
     return points[order], loglike[order], marginal[order], order
 
 
-def _peak_weights(marginal, hessians):  # deliberate: test seam
+def _peak_weights(
+    marginal, hessians
+):  # deliberate: unit-tested on synthetic Hessians; no cheap public route
     """Normalized Laplace masses of the peaks, and whether each is one.
 
     log w_k = m_k - ½ log det H_k, with H_k the Hessian of -m at peak k
@@ -1705,7 +1713,7 @@ def _peak_weights(marginal, hessians):  # deliberate: test seam
 
 def _refined_gap(
     points, marginal, grid_score, xx, yy, rival
-):  # deliberate: test seam
+):  # deliberate: unit-tested on synthetic peaks; no cheap public route
     """The best peak's marginal score minus that of its best rival more
     than ``rival`` from it: a refined peak or, as a floor, a grid
     point."""
@@ -1788,7 +1796,7 @@ def _unconverged_cause(stops):
     return " and ".join(_STOP_CAUSE[c] for c in sorted(set(stops)))
 
 
-def _flag_one_night(  # deliberate: test seam
+def _flag_one_night(  # deliberate: 85 lines, tested directly
     catalogue,
     gap_marginal,
     flux_bounds,
@@ -1878,7 +1886,9 @@ def _flag_one_night(  # deliberate: test seam
 _MODE_TOL = 0.01  # relative wavelength tolerance of one spectral setup
 
 
-def _mode_keys(data):  # deliberate: test seam
+def _mode_keys(
+    data,
+):  # deliberate: unit-tested directly; no cheap public route
     """A label per dataset for its instrument mode: its number of spectral
     channels and wavelength range. Datasets with the same number of
     channels and a range within 1% (the per-night jitter of a wavelength
@@ -2130,9 +2140,8 @@ def epoch_positions(
 ):
     """The companion's position in each dataset of a binary.
 
-    Scores a static binary on a grid of positions and fluxes, refines the
-    ``n_peaks`` best maxima and ranks them: the best is the position, its
-    curvature the covariance. Each night also gets flags
+    Scores a static binary on a grid, refines the ``n_peaks`` best maxima and
+    ranks them; each night also gets flags
     ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
 
     Parameters
@@ -2148,8 +2157,8 @@ def epoch_positions(
         Refine grid peaks; peaks kept per dataset (1 can commit to the wrong
         peak); as for ``marginal_loglike``.
     batch_size, memory_budget, coarse_nats, coarse_margin : optional
-        Speed knobs; the coarse ones limit the exact scale integral to the best
-        points (None: everywhere), see [night flags](../orbit_methods.md#night-flags).
+        Speed knobs; the coarse ones limit the exact scale integral to the
+        best points (None: everywhere).
     primary_diam : float, optional
         Fixed uniform-disk primary diameter (mas); None or 0 is a point
         primary. Never the diameter implied by the orbit under test.
@@ -2161,8 +2170,6 @@ def epoch_positions(
     Returns
     -------
     EpochPositions
-        ``dra``, ``ddec``, ``cov``, ``flags``, and per night ``peaks``,
-        ``gap_marginal`` and ``chi2_raw`` (χ²/N on the quoted errors).
 
     Warns
     -----
@@ -2499,9 +2506,7 @@ def estimate_primary_diameter(
     """Estimate a shared uniform-disk primary diameter and whether the data resolve it.
 
     Each night's binary is re-refined over a diameter grid and the scores
-    summed; the primary is resolved when the best diameter gains
-    ``resolve_nats`` over a point primary
-    ([rule](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    summed ([rule](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
 
     Parameters
     ----------
@@ -2510,7 +2515,7 @@ def estimate_primary_diameter(
     positions : EpochPositions
         Per-night positions; flagged nights are left out unless all are.
     resolve_nats : float, optional
-        Gain (nats) at which the primary counts as resolved (default 5).
+        Gain (nats) over a point primary at which it counts as resolved (5).
     diam_grid : array-like, optional
         Positive diameters (mas) to try besides 0.
     s_max, dof, block_dof : optional
@@ -2821,11 +2826,10 @@ def start_from_positions(
 ):
     """Start an orbit fit to multi-epoch visibilities from a positions fit.
 
-    Per-dataset [`epoch_positions`][virgil.epochs.epoch_positions], then
-    Thiele-Innes orbits ranked by all the data, then
-    [`fit`][virgil.fitting.fit] from the best distinct orbits
-    ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
-    It only chooses where the fits start.
+    Thiele-Innes orbits from per-dataset
+    [`epoch_positions`][virgil.epochs.epoch_positions], ranked by all the
+    data, then [`fit`][virgil.fitting.fit] from the best distinct ones. It
+    only chooses where the fits start.
 
     Parameters
     ----------
@@ -2844,15 +2848,14 @@ def start_from_positions(
     t_ref : float
         Reference time (MJD) of the starting orbits.
     scales, noise, dof, s_max, batch_size, eccs, n_phase : optional
-        As for ``rank_orbits`` ([conventions](../conventions.md)) and
-        ``starting_orbits``; ``noise`` feeds only the refinement fits.
+        As for ``rank_orbits`` and ``starting_orbits``; ``noise`` feeds only
+        the refinement fits.
     n_candidates, n_refine, min_gap : optional
         Orbits ranked (200), distinct ones refined (4), and the
         ``gap_marginal`` (nats, 5) a dataset needs to seed.
-    refine_positions, n_peaks, primary_diam, skip_flagged : optional
-        As for ``epoch_positions``; flagged datasets seed nothing but still count.
-    flag_options : dict, optional
-        ``epoch_positions`` ``flag_*`` keywords (``flag_min_gap`` defaults to ``min_gap``).
+    refine_positions, n_peaks, primary_diam, skip_flagged, flag_options : optional
+        As for ``epoch_positions`` (``flag_min_gap`` defaults to ``min_gap``);
+        flagged datasets seed nothing but still count.
     **fit_options
         Passed to the refinement fits; one that raises goes in ``OrbitStart.failed``.
 
@@ -2983,13 +2986,17 @@ def start_from_positions(
     )
 
 
-def _loss_order(result):  # deliberate: test seam
+def _loss_order(
+    result,
+):  # deliberate: only its direct test covers the sort order
     """Sort key: lowest loss first, non-finite losses last."""
     loss = result.info["loss"]
     return (0, loss) if math.isfinite(loss) else (1, 0.0)
 
 
-def _warn_if_coarse(periods, times):  # deliberate: test seam
+def _warn_if_coarse(
+    periods, times
+):  # deliberate: only its direct test covers the warning
     """Warn when trial periods drift apart by more than 1/k of a cycle
     over the baseline of ``times`` (see ``period_grid``)."""
     times = onp.asarray(times, float)

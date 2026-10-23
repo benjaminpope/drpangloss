@@ -93,9 +93,9 @@ def test_the_velocity_free_fit_is_the_position_fit():
     assert arcs._arc(pos, motion, 0.0).n_data == 2 * len(NIGHTS) + 4
 
 
-def test_the_polish_lowers_an_off_grid_minimum():
+def test_the_cut_keeps_an_off_grid_period():
     # A coarse (τ, e) grid only bounds a period's χ² from above: at high e
-    # the truth falls between grid points, and the cut must not see that.
+    # the truth falls between grid points, and the cut must not exclude it.
     truth = {**TRUTH, "ecc": 0.8}
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
     dra, ddec, _ = orbit.relative(NIGHTS)
@@ -103,12 +103,8 @@ def test_the_polish_lowers_an_off_grid_minimum():
     pos = PositionData(
         NIGHTS, dra, ddec, onp.tile(0.01 * onp.eye(2), (n, 1, 1)), t_ref=T_REF
     )
-    arc = arcs._arc(pos, None, 0.0)
-    periods = onp.array([truth["period"]])
-    grid, _, chi2 = arcs._pv_grid(arc, periods, ECCS)
-    steps = onp.array([[1e-3, truth["period"] / arcs._N_PHASE, 0.15]])
-    polished = arcs._polish(arc, grid, chi2, steps, 0.9)
-    assert polished[0] < 0.1 * chi2.min()
+    counts = arcs.unwrap_cycles(pos, p_range=P_RANGE, eccs=ECCS)
+    assert any(lo <= truth["period"] <= hi for lo, hi in counts.intervals)
 
 
 # The true cycle count survives for a range of eccentricities and
@@ -207,13 +203,23 @@ def test_a_night_velocity_covariance_scales_before_the_floor():
     )
 
 
-def test_the_sign_free_seeds_use_the_scaled_positions_too():
-    pos, _ = _positions_and_motion(TRUTH)
-    same = arcs._jittered(pos, 0.0)
-    assert same is pos
-    wide = arcs._jittered(pos, 0.0, cov_scale=9.0)
+def test_the_sign_free_seeds_use_the_scaled_positions_too(monkeypatch):
+    pos, motion = _positions_and_motion(TRUTH)
+    seen = []
+
+    def spy(positions, *a, **k):
+        seen.append(positions)
+        return []
+
+    monkeypatch.setattr(arcs, "starting_orbits", spy)
+    band = alias_bands(NIGHTS, P_RANGE)[:1]
+    for scale in (1.0, 9.0):
+        arcs.arc_profile(
+            pos, motion, band, cov_scale=scale, eccs=ECCS, sign_free=True
+        )
+    assert seen[0] is pos
     assert onp.allclose(
-        arcs._position_cov(wide, 0.0), 9.0 * arcs._position_cov(pos, 0.0)
+        arcs._position_cov(seen[1], 0.0), 9.0 * arcs._position_cov(pos, 0.0)
     )
 
 
@@ -289,6 +295,13 @@ def test_a_night_velocity_is_measured_from_its_halves():
         assert chi2 < 16.0  # within 4σ
 
 
+def _early_half(data):
+    """The earlier half of a night's frames, and its mean time."""
+    frames = onp.unique(onp.asarray(data.frame))
+    pick = onp.isin(onp.asarray(data.frame), frames[: frames.size // 2])
+    return data._subset(pick), float(onp.mean(onp.asarray(data.mjd)[pick]))
+
+
 def test_a_half_night_position_is_refined_to_a_converged_peak():
     # _refine_marginal returns (x, value, stop); a half's position is kept
     # only from a converged refinement (not a stalled or step-limited one).
@@ -298,7 +311,7 @@ def test_a_half_night_position_is_refined_to_a_converged_peak():
         vlti_night(NIGHTS[0], 6, 0.0, d_phi=0.05),
         key=jax.random.PRNGKey(0),
     )
-    (early, t_early), _ = arcs._halves(data)
+    early, t_early = _early_half(data)
     truth = onp.array([float(c) for c in orbit.relative(t_early)[:2]])
     scale = float(arcs.fringe_scales(early)[0])
     start = onp.append(truth + 0.1 * scale, 0.3)  # off the peak, in the window
@@ -317,7 +330,7 @@ def test_a_half_night_that_does_not_converge_has_no_position(monkeypatch):
         vlti_night(NIGHTS[0], 6, 0.0, d_phi=0.05),
         key=jax.random.PRNGKey(0),
     )
-    (early, _), _ = arcs._halves(data)
+    early, _ = _early_half(data)
     scale = float(arcs.fringe_scales(early)[0])
     for stop in (_gauss_newton.STALLED, _gauss_newton.LIMIT):
         monkeypatch.setattr(

@@ -273,7 +273,15 @@ class KeplerOrbit(zdx.Base):
                 "(the position angle takes only two values); use dt_peri "
                 "or StateVectorOrbit for edge-on orbits."
             )
-        mean = _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega)
+        f = _true_anomaly_at_ref(theta, inc, omega, Omega)
+        ecc_ = np.asarray(ecc, float)
+        ecc_anomaly = np.arctan2(
+            np.sqrt(1.0 - ecc_**2) * np.sin(f), ecc_ + np.cos(f)
+        )
+        mean = ecc_anomaly - ecc_ * np.sin(ecc_anomaly)
+        # E from atan2 is in (-π, π], so M is too: only M = π needs moving.
+        # (Shifting by π before a modulo would round small M to zero in float32.)
+        mean = np.where(mean >= np.pi, mean - 2.0 * np.pi, mean)
         dt_peri = -mean * np.asarray(period, float) / (2.0 * np.pi)
         return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
 
@@ -672,7 +680,9 @@ class PositionData(zdx.Base):
 
 
 @jax.jit
-def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
+def _thiele_innes_fit(  # deliberate: jit boundary vmapped by _fit_batch
+    dt, dra, ddec, whitener, period, dt_peri, ecc
+):
     """Weighted least-squares ``(A, B, F, G)`` and χ² at one grid point."""
     x, y = _unit_orbit(dt, period, dt_peri, ecc)
     zero = np.zeros_like(x)
@@ -803,7 +813,7 @@ def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
     return 1.0 / onp.linspace(1.0 / p_min, 1.0 / p_max, max(n, 2))
 
 
-def _phase_drift(periods, baseline):
+def _phase_drift(periods, baseline):  # deliberate: imported by epochs.py
     """The largest phase drift (cycles) between neighbouring trial periods
     over ``baseline`` days: ``T |1/P_i - 1/P_(i+1)|``; 0 for one period."""
     frequencies = onp.sort(1.0 / onp.asarray(periods, float).ravel())
@@ -813,7 +823,9 @@ def _phase_drift(periods, baseline):
 
 
 @functools.partial(jax.jit, static_argnums=0)
-def _fit_batch(fitter, dt, dra, ddec, whitener, period, dt_peri, ecc):
+def _fit_batch(  # deliberate: jit boundary, fitter static
+    fitter, dt, dra, ddec, whitener, period, dt_peri, ecc
+):
     """``fitter`` at a batch of grid points (positions traced)."""
     return jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))(
         dt, dra, ddec, whitener, period, dt_peri, ecc
@@ -966,11 +978,13 @@ class StateVectorOrbit(zdx.Base):
 
     Parameters
     ----------
-    dra, ddec, dz : float
-        Position of the secondary at ``t_ref`` (mas); ``dz`` is positive away
-        from the observer.
-    vra, vdec, vz : float
+    dra, ddec : float
+        Position of the secondary at ``t_ref`` (mas).
+    vra, vdec : float
         Its velocity at ``t_ref`` (mas/yr).
+    dz, vz : float
+        Line-of-sight position (mas) and velocity (mas/yr), positive away
+        from the observer.
     mu : float
         Gravitational parameter ``4π² a_mas³ / P²`` (mas³/yr², P in years).
     t_ref : float, optional
@@ -1180,16 +1194,14 @@ class RVData(zdx.Base):
 
     # -- analytic marginalization of the instrument zero points ----------
 
-    def _design(self):
-        k = len(self.instruments)
-        return (self.inst[:, None] == np.arange(k)[None, :]).astype(
-            self.rv.dtype
-        )
-
     def _marginal(self, prior):
         """The zero points as a [`LinearMarginal`][virgil._linear.LinearMarginal]."""
         mean, sd = prior
-        return LinearMarginal(self._design(), mean, prior_sd=sd)
+        k = len(self.instruments)
+        design = (self.inst[:, None] == np.arange(k)[None, :]).astype(
+            self.rv.dtype
+        )
+        return LinearMarginal(design, mean, prior_sd=sd)
 
     def marginal_whitened_residuals(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
@@ -1401,19 +1413,6 @@ def _true_anomaly_at_ref(theta, inc, omega, Omega):
     phi = np.deg2rad(theta - Omega)
     u = np.arctan2(np.sin(phi) / np.cos(np.deg2rad(inc)), np.cos(phi))
     return u - np.deg2rad(omega)
-
-
-def _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega):
-    """M in [-π, π) at the epoch where the position angle is ``theta``."""
-    f = _true_anomaly_at_ref(theta, inc, omega, Omega)
-    ecc = np.asarray(ecc, float)
-    ecc_anomaly = np.arctan2(
-        np.sqrt(1.0 - ecc**2) * np.sin(f), ecc + np.cos(f)
-    )
-    mean = ecc_anomaly - ecc * np.sin(ecc_anomaly)
-    # E from atan2 is in (-π, π], so M is too: only M = π needs moving.
-    # (Shifting by π before a modulo would round small M to zero in float32.)
-    return np.where(mean >= np.pi, mean - 2.0 * np.pi, mean)
 
 
 def position_angle_log_jacobian(theta, ecc, inc, omega, Omega):

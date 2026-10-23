@@ -147,7 +147,7 @@ class AngleVector(dist.Distribution):
 
     def _sample_radius(
         self, key, shape
-    ):  # deliberate: named rejection sampler, 30 lines
+    ):  # deliberate: 32-line sampler with nested loop fns; inlined it would bury sample
         """Draws of r ∝ r exp(-(r - 1)²/2s²), by rejection from a Normal
         at its mode r* = (1 + √(1 + 4s²))/2 (the ratio is log-concave)."""
         s = self.ring_width

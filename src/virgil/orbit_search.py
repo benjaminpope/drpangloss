@@ -274,7 +274,9 @@ class _Band:
         return int(self.log_flux.size)
 
 
-def _bands(epochs, shared):  # deliberate: named step of score_orbits, 70 lines
+def _bands(
+    epochs, shared
+):  # deliberate: 70 lines; inlined it would bury score_orbits
     """The bands, in order of first appearance among the datasets."""
     if not isinstance(shared, SharedFlux):
         raise TypeError(
@@ -392,21 +394,6 @@ def _local_rank(rows, cols, n):
     )
 
 
-def _gain_rank(gains):  # deliberate: named step of _Scorer.__init__
-    """How many independent gains (host): the degrees of freedom lost."""
-    rows, shapes = onp.asarray(gains.rows), onp.asarray(gains.shapes)
-    rank = _local_rank(rows, shapes, gains.n_vis)
-    if gains.spanning is None:
-        return rank
-    span = onp.asarray(gains.spanning, float)
-    for r, c in zip(rows, shapes):
-        inside = r < gains.n_vis
-        r, c = r[inside], c[inside]
-        if c.size:
-            span[r] -= c @ (onp.linalg.pinv(c) @ span[r])
-    return rank + int(onp.linalg.matrix_rank(span))
-
-
 class _Scorer:
     """The χ² blocks of one dataset for given complex visibilities, with
     gains and closure-phase offsets profiled, and their score."""
@@ -432,7 +419,18 @@ class _Scorer:
         surface = _Surface(plain, s_max)
         lost = {"vis": 0, "phi": 0}
         if self.gains is not None:
-            lost["vis"] = _gain_rank(self.gains)
+            # The independent gains: the degrees of freedom lost.
+            g = self.gains
+            rows, shapes = onp.asarray(g.rows), onp.asarray(g.shapes)
+            lost["vis"] = _local_rank(rows, shapes, g.n_vis)
+            if g.spanning is not None:
+                span = onp.asarray(g.spanning, float)
+                for r, c in zip(rows, shapes):
+                    inside = r < g.n_vis
+                    r, c = r[inside], c[inside]
+                    if c.size:
+                        span[r] -= c @ (onp.linalg.pinv(c) @ span[r])
+                lost["vis"] += int(onp.linalg.matrix_rank(span))
         if self.offsets is not None:
             sigma = onp.asarray(plain.flatten_data()[1], float)
             cols = onp.asarray(
@@ -589,7 +587,7 @@ def _marginal_1d(f, x0, lo, hi, delta, shared):
 
 def _band_marginal(
     band, shared, score, grid_scores
-):  # deliberate: 141 lines, called from the jitted kernel
+):  # deliberate: 143 lines, the jitted kernel's callback
     """One band's marginal over its flux (and slope), its profile and the
     profiled values: ``(marginal, profiled, (f, σ_f, f_edge, β, σ_β,
     β_edge, fallback))``.
@@ -732,25 +730,6 @@ def _band_marginal(
     )
 
 
-def _candidates(orbits):  # deliberate: named step of score_orbits
-    """The candidates stacked along a leading axis, and their number."""
-    if isinstance(orbits, (list, tuple)):
-        stacked = _stack(_orbit_list(orbits))
-    else:
-        stacked = orbits
-    leaves = jax.tree_util.tree_leaves(stacked)
-    if not leaves:
-        raise ValueError("There are no orbits to score.")
-    if onp.ndim(leaves[0]) == 0:
-        stacked = jax.tree_util.tree_map(
-            lambda x: np.asarray(x)[None], stacked
-        )
-    n = int(onp.shape(jax.tree_util.tree_leaves(stacked)[0])[0])
-    if n == 0:
-        raise ValueError("There are no orbits to score.")
-    return stacked, n
-
-
 def _first(stacked, k):
     return jax.tree_util.tree_map(lambda x: x[k], stacked)
 
@@ -771,7 +750,7 @@ def _wavel(data):
 
 def _fixed_parts(
     epochs, model, stacked, n, dtype
-):  # deliberate: named step of score_orbits, 62 lines
+):  # deliberate: 64 lines of model checks; inlined it would bury score_orbits
     """Per dataset: the companion-free numerator A = V(0) T(0) and the
     total fluxes T(0), T(1), checked to be the same for the first and
     last candidate, and the scene checked to be linear in the flux."""
@@ -835,27 +814,7 @@ def _fixed_parts(
     return parts
 
 
-def _peak_scales(
-    scorers, chi2_peak, dofs, s_max
-):  # deliberate: named step of score_orbits
-    """Each dataset's largest block scale ŝ = √(χ²/ν) at the profiled
-    flux, ``(n, n_dataset)``, and whether its posterior presses against
-    ``s_max``: ŝ is within one posterior width in ln s, 1/√(2 dof ν), of
-    the bound (always False without ``s_max``)."""
-    scale, at_bound = [], []
-    for scorer, chi2, dof in zip(scorers, chi2_peak, dofs):
-        nu = scorer.surface.nu
-        s_hat = onp.sqrt(onp.asarray(chi2, float) / nu)
-        scale.append(s_hat.max(axis=1))
-        if s_max is None:
-            at_bound.append(onp.zeros(len(s_hat), bool))
-        else:
-            reach = s_hat * onp.exp(1.0 / onp.sqrt(2.0 * dof * nu))
-            at_bound.append(onp.any(reach >= float(s_max), axis=1))
-    return onp.stack(scale, axis=1), onp.stack(at_bound, axis=1)
-
-
-def _score_static(  # deliberate: builds the jit's static key, 35 lines
+def _score_static(  # deliberate: 35-line jit static key; inlined it would bury score_orbits
     model, epochs, bands, scorers, term_fns, terms, shared, scales,
     batch_size, s_max,
 ):  # fmt: skip
@@ -983,13 +942,12 @@ def score_orbits(
     epochs : Epochs
         The data; datasets without sample times use ``Epochs.times``.
     orbits : sequence or orbit
-        Orbits (or ``starting_orbits`` pairs), or one orbit with a leading
-        candidate axis; one class and ``t_ref``.
+        Orbits (or ``starting_orbits`` pairs) of one class and ``t_ref``, or
+        one orbit with a leading candidate axis.
     shared : SharedFlux, optional
         Flux grids, bands and slopes (default one band, f in [1e-3, 1]).
     terms : sequence, optional
-        Extra log likelihood terms (``RVData.term``, ``PositionData.term``)
-        or callables ``orbit -> log likelihood``.
+        Extra log likelihood terms or callables ``orbit -> log likelihood``.
     scales, dof, s_max : optional
         As for ``rank_orbits``; ``s_max`` defaults to 5, and a candidate
         needing more is penalized (``OrbitScores.scale_at_bound``).
@@ -1009,7 +967,21 @@ def score_orbits(
         raise ValueError(f"scales must be one of {_SCALES}, not {scales!r}.")
     shared = SharedFlux() if shared is None else shared
     bands, reference = _bands(epochs, shared)
-    stacked, n = _candidates(orbits)
+    stacked = (
+        _stack(_orbit_list(orbits))
+        if isinstance(orbits, (list, tuple))
+        else orbits
+    )
+    leaves = jax.tree_util.tree_leaves(stacked)
+    if not leaves:
+        raise ValueError("There are no orbits to score.")
+    if onp.ndim(leaves[0]) == 0:  # one orbit: a leading candidate axis
+        stacked = jax.tree_util.tree_map(
+            lambda x: np.asarray(x)[None], stacked
+        )
+    n = int(onp.shape(jax.tree_util.tree_leaves(stacked)[0])[0])
+    if n == 0:
+        raise ValueError("There are no orbits to score.")
     # Work units per dataset of a band: score evaluations, counting a first
     # or second derivative as one.
     newton = 1 + shared.newton * (3 + _HALVINGS) + 2
@@ -1095,7 +1067,21 @@ def score_orbits(
         out = _score_kernel(static, *args)
     chi2_peak = out[-1]
     out = [onp.asarray(x) for x in out[:-1]]
-    scale, scale_at_bound = _peak_scales(scorers, chi2_peak, dofs, s_max)
+    # Each dataset's largest block scale ŝ = √(χ²/ν) at the profiled flux,
+    # and whether ŝ is within one posterior width in ln s, 1/√(2 dof ν), of
+    # ``s_max`` (never without ``s_max``).
+    scale, scale_at_bound = [], []
+    for scorer, chi2, dof in zip(scorers, chi2_peak, dofs):
+        nu = scorer.surface.nu
+        s_hat = onp.sqrt(onp.asarray(chi2, float) / nu)
+        scale.append(s_hat.max(axis=1))
+        if s_max is None:
+            scale_at_bound.append(onp.zeros(len(s_hat), bool))
+        else:
+            reach = s_hat * onp.exp(1.0 / onp.sqrt(2.0 * dof * nu))
+            scale_at_bound.append(onp.any(reach >= float(s_max), axis=1))
+    scale = onp.stack(scale, axis=1)
+    scale_at_bound = onp.stack(scale_at_bound, axis=1)
     (score, profiled, flux, flux_err, f_edge, slope, slope_err, b_edge,
      fallback) = out[:9]  # fmt: skip
     return OrbitScores(

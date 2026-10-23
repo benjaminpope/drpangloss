@@ -140,32 +140,9 @@ class CycleCounts:
 # ---------------------------------------------------------------------------
 
 
-def _halves(d):  # deliberate: test seam
-    """``[(part, time), (part, time)]``: ``d`` split into its earlier and
-    later frames, or None (one frame, no times, or data that cannot be
-    split)."""
-    mjd = d.mjd
-    if mjd is None or d.frame is None:
-        return None
-    frames, frame_of = onp.unique(onp.asarray(d.frame), return_inverse=True)
-    if frames.size < 2:
-        return None
-    times = onp.bincount(frame_of, weights=mjd) / onp.bincount(frame_of)
-    late = onp.zeros(frames.size, bool)
-    late[onp.argsort(times)[frames.size // 2 :]] = True
-    if onp.ptp(times) <= 0:
-        return None
-    parts = []
-    for side in (False, True):
-        try:
-            part = d._subset(late[frame_of] == side)
-        except ValueError:  # projected data, offsets, OI_FLUX
-            return None
-        parts.append((part, float(onp.mean(times[late == side]))))
-    return parts
-
-
-def _half_position(part, x0, resolution, diam):  # deliberate: test seam
+def _half_position(
+    part, x0, resolution, diam
+):  # deliberate: 31 lines, six early exits; test patches _refine_marginal through it
     """The refined ``(dra, ddec)`` of ``part`` from ``x0`` and its
     covariance, or None if the refinement fails."""
     window = _REFINE_WINDOW * resolution
@@ -244,8 +221,28 @@ def night_motion(
     cov = onp.tile(onp.eye(2), (n, 1, 1))
     measured = onp.zeros(n, bool)
     for i, d in enumerate(sets):
-        halves = _halves(d)
-        if halves is None:
+        # Split the night's frames into an earlier and a later half.
+        if d.mjd is None or d.frame is None:
+            continue
+        frames, frame_of = onp.unique(
+            onp.asarray(d.frame), return_inverse=True
+        )
+        if frames.size < 2:
+            continue
+        times = onp.bincount(frame_of, weights=d.mjd) / onp.bincount(frame_of)
+        late = onp.zeros(frames.size, bool)
+        late[onp.argsort(times)[frames.size // 2 :]] = True
+        if onp.ptp(times) <= 0:
+            continue
+        try:
+            halves = [
+                (
+                    d._subset(late[frame_of] == side),
+                    float(onp.mean(times[late == side])),
+                )
+                for side in (False, True)
+            ]
+        except ValueError:  # projected data, offsets, OI_FLUX
             continue
         resolution = float(fringe_scales(d)[0])
         x0 = onp.array(
@@ -362,7 +359,7 @@ def _arc(positions, motion, jitter_mas, cov_scale=1.0):
 @jax.jit
 def _pv_fit(
     t, r, wr, v, wv, period, dt_peri, ecc
-):  # deliberate: jit/vmap boundary, test seam
+):  # deliberate: jit/vmap boundary
     """Least-squares ``(A, B, F, G)`` and χ² of positions and velocities at
     one grid point: velocities are linear in the constants too."""
 
@@ -436,32 +433,6 @@ _STEPS = onp.stack(
 ).reshape(-1, 3)
 
 
-def _polish(
-    arc, grid, chi2, steps, ecc_max, n_iter=4
-):  # deliberate: test seam
-    """Each grid period's χ² minimum, lowered by a pattern search in
-    ``(period, dt_peri, ecc)`` about its best grid point, halving
-    ``steps`` (``(n, 3)``) each time: a coarse grid only bounds the
-    profile χ² from above, and the cut must not exclude a period for
-    falling between grid points."""
-    n = len(steps)
-    chi2 = chi2.reshape(n, -1)
-    best = chi2.argmin(axis=1)
-    x = grid.reshape(n, -1, 3)[onp.arange(n), best]
-    low = chi2[onp.arange(n), best]
-    for _ in range(n_iter):
-        steps = steps / 2.0
-        trial = x[:, None, :] + _STEPS[None] * steps[:, None, :]
-        trial[..., 2] = onp.clip(trial[..., 2], 0.0, ecc_max)
-        _, c = _pv_points(arc, trial.reshape(-1, 3))
-        c = c.reshape(n, len(_STEPS))
-        j = c.argmin(axis=1)
-        better = c[onp.arange(n), j] < low
-        x = onp.where(better[:, None], trial[onp.arange(n), j], x)
-        low = onp.where(better, c[onp.arange(n), j], low)
-    return low
-
-
 # ---------------------------------------------------------------------------
 # Cycle counts and seeds
 # ---------------------------------------------------------------------------
@@ -493,9 +464,8 @@ def unwrap_cycles(
     """The periods that the short arcs admit, unwrapping the cycle counts.
 
     The nights are joined into arcs shortest gap first. Where an arc has more
-    measured coordinates than the seven orbital parameters, each period on a
-    grid in phase across it is scored by its best Thiele–Innes fit to the
-    positions and velocities, and kept while its χ² is within
+    measured coordinates than the seven orbital parameters, each period is
+    scored by its best Thiele–Innes fit and kept while its χ² is within
     ``delta_chi2 * max(1, chi2_min / dof)`` of the best. Too few data leave
     the whole window: weak constraints keep more periods, never fewer.
 
@@ -551,7 +521,27 @@ def unwrap_cycles(
             ],
             -1,
         )
-        per_period = _polish(sub, grid, chi2, spacing, ecc_max)
+        # Lower each period's grid minimum by a pattern search in (period,
+        # dt_peri, ecc), halving the steps each time: a coarse grid only
+        # bounds the profile χ² from above, and the cut must not exclude a
+        # period for falling between grid points.
+        n_p = len(spacing)
+        chi2 = chi2.reshape(n_p, -1)
+        pick = chi2.argmin(axis=1)
+        x = grid.reshape(n_p, -1, 3)[onp.arange(n_p), pick]
+        per_period = chi2[onp.arange(n_p), pick]
+        for _ in range(4):
+            spacing = spacing / 2.0
+            trial = x[:, None, :] + _STEPS[None] * spacing[:, None, :]
+            trial[..., 2] = onp.clip(trial[..., 2], 0.0, ecc_max)
+            _, c = _pv_points(sub, trial.reshape(-1, 3))
+            c = c.reshape(n_p, len(_STEPS))
+            step = c.argmin(axis=1)
+            better = c[onp.arange(n_p), step] < per_period
+            x = onp.where(better[:, None], trial[onp.arange(n_p), step], x)
+            per_period = onp.where(
+                better, c[onp.arange(n_p), step], per_period
+            )
         best = float(per_period.min())
         scale = max(1.0, best / dof)
         keep = per_period <= best + delta_chi2 * scale
@@ -628,7 +618,15 @@ def arc_profile(
         ]
         if sign_free:  # AGENTS.md, "Label swap" row
             found = found + starting_orbits(
-                _jittered(positions, jitter_mas, cov_scale),
+                positions
+                if not jitter_mas and cov_scale == 1.0
+                else type(positions)(
+                    onp.asarray(positions.dt, float) + positions.t_ref,
+                    onp.asarray(positions.dra),
+                    onp.asarray(positions.ddec),
+                    _position_cov(positions, jitter_mas, cov_scale),
+                    t_ref=positions.t_ref,
+                ),
                 periods,
                 eccs=eccs,
                 n_best=n_best,
@@ -644,17 +642,3 @@ def arc_profile(
             )
         )
     return rows
-
-
-def _jittered(positions, jitter_mas, cov_scale=1.0):  # deliberate: test seam
-    """``positions`` with their covariances times ``cov_scale`` and
-    ``jitter_mas`` added in quadrature."""
-    if not jitter_mas and cov_scale == 1.0:
-        return positions
-    return type(positions)(
-        onp.asarray(positions.dt, float) + positions.t_ref,
-        onp.asarray(positions.dra),
-        onp.asarray(positions.ddec),
-        _position_cov(positions, jitter_mas, cov_scale),
-        t_ref=positions.t_ref,
-    )
