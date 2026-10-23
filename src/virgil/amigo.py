@@ -102,6 +102,12 @@ def validate_mixed_disco_record(record):
                 "AMIGO DISCO covariance is not diagonal: relative "
                 f"off-diagonal {relative_off_diagonal:.3g}."
             )
+        if not onp.allclose(
+            onp.diag(covariance), sigma**2, rtol=1e-8, atol=0.0
+        ):
+            raise ValueError(
+                "AMIGO DISCO covariance diagonal does not match sigma squared."
+            )
 
 
 def mixed_disco_fields(record):
