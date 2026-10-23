@@ -29,6 +29,7 @@ from ._deprecate import renamed
 from ._geometry import separation_pa
 from ._utils import is_flux_param, resolve_flux_param
 from .fields import GaussianField, MultipoleField
+from .models import MultipoleDisk, RadialGP
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
 
 __provisional__ = ("plot_field_draws",)
@@ -1874,6 +1875,7 @@ def plot_field_draws(
     cuts=None,
     axes_pa=((0.0, "vertical"), (90.0, "horizontal")),
     mmax=3,
+    npix=64,
     truth=None,
     snr=False,
     beam=None,
@@ -1894,16 +1896,23 @@ def plot_field_draws(
 
     Parameters
     ----------
-    field : GaussianField or MultipoleField, optional
+    field : GaussianField, MultipoleField or MultipoleDisk, optional
         Alone, gives prior draws from whitened normal latents of ``key``;
-        with ``latents``, posterior draws.
+        with ``latents``, posterior draws. A
+        [`MultipoleDisk`][virgil.models.MultipoleDisk] needs a
+        [`RadialGP`][virgil.models.RadialGP] profile; its profile latents
+        ``profile.z`` and, if its harmonics have a ``prior``,
+        ``harmonics.z`` are drawn at the disk's hyperparameters.
     pixel_scale_mas : float
         Pixel scale, mas.
     key : jax.Array, optional
         PRNG key for prior draws.
-    latents : array-like, shape (n, *field.latent.shape), optional
+    latents : array-like, shape (n, *field.latent.shape) or dict, optional
         Posterior latents, e.g. from
-        [`laplace_samples`][virgil.imaging.laplace_samples].
+        [`laplace_samples`][virgil.imaging.laplace_samples]. For a
+        MultipoleDisk, a dict ``{"profile.z": (n, n_r), "harmonics.z":
+        (n, 2, M, n_k)}`` (paths on the disk; a missing path stays at the
+        disk's value).
     images : array-like, shape (n, nrow, ncol), optional
         Rendered images instead of a field (not for ``"multipole"`` cuts).
     n : int, optional
@@ -1916,10 +1925,16 @@ def plot_field_draws(
         ``η = Σ a_m cos mθ + b_m sin mθ`` (FFT of
         ``MultipoleField.polar_values`` along θ, the residual without ``mean``;
         ``a_0`` is the azimuthal mean) against disk-plane radius, one offset
-        track per ``m``. Default: ``"multipole"`` for a MultipoleField,
+        track per ``m``. For a MultipoleDisk the ``m = 0`` track is
+        ``ln I₀(r)`` (less ``μ``) and the others the cosine coefficients
+        ``c_m(r)`` of ``I/I₀ = 1 + Σ c_m cos mθ + s_m sin mθ``, at the
+        projected disk's radius. Default: ``"multipole"`` for a MultipoleField
+        or MultipoleDisk,
         ``"principal"`` for a GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
         ``(PA in degrees North through East, label)`` per ``"axes"`` cut.
+    npix : int, optional
+        Image side in pixels for a MultipoleDisk (default 64).
     truth : array-like, shape (nrow, ncol), optional
         True image (posterior only): dashed in the cuts, and the reference peak.
     snr : bool, optional
@@ -1952,22 +1967,34 @@ def plot_field_draws(
     if snr and not posterior:
         raise ValueError("snr=True needs posterior input: latents or images.")
     if field is not None:
-        if not isinstance(field, (GaussianField, MultipoleField)):
-            raise TypeError("field must be a GaussianField or MultipoleField.")
-        if latents is None:
-            if key is None:
-                raise ValueError("Prior draws need a PRNG key.")
-            latents = jax.random.normal(
-                key, (n, *field.latent.shape), dtype=field.latent.dtype
+        if isinstance(field, MultipoleDisk):
+            latents = _disk_latents(field, latents, key, n)
+            h = float(pixel_scale_mas)
+            imgs = onp.asarray(
+                jax.vmap(
+                    lambda z: _disk_with(field, z).render(int(npix), npix * h)
+                )(latents)
             )
-        latents = np.asarray(latents)
-
-        etas = onp.asarray(
-            jax.vmap(
-                lambda z: _with_latent(field, z).evaluate(pixel_scale_mas)
-            )(latents)
-        )
-        imgs = onp.exp(etas)
+            etas = None
+        elif not isinstance(field, (GaussianField, MultipoleField)):
+            raise TypeError(
+                "field must be a GaussianField, MultipoleField or "
+                "MultipoleDisk."
+            )
+        else:
+            if latents is None:
+                if key is None:
+                    raise ValueError("Prior draws need a PRNG key.")
+                latents = jax.random.normal(
+                    key, (n, *field.latent.shape), dtype=field.latent.dtype
+                )
+            latents = np.asarray(latents)
+            etas = onp.asarray(
+                jax.vmap(
+                    lambda z: _with_latent(field, z).evaluate(pixel_scale_mas)
+                )(latents)
+            )
+            imgs = onp.exp(etas)
     else:
         imgs = onp.asarray(images, dtype=float)
         etas = None
@@ -1984,13 +2011,15 @@ def plot_field_draws(
             "axes"
             if field is None
             else "multipole"
-            if isinstance(field, MultipoleField)
+            if isinstance(field, (MultipoleField, MultipoleDisk))
             else "principal"
         )
     if cuts not in ("principal", "axes", "multipole"):
         raise ValueError(f"Unknown cuts mode {cuts!r}.")
-    if cuts == "multipole" and not isinstance(field, MultipoleField):
-        raise ValueError("cuts='multipole' needs a MultipoleField.")
+    if cuts == "multipole" and not isinstance(
+        field, (MultipoleField, MultipoleDisk)
+    ):
+        raise ValueError("cuts='multipole' needs a MultipoleField or disk.")
     if (
         cuts == "principal"
         and field is not None
@@ -2063,7 +2092,30 @@ def plot_field_draws(
             return a
 
         ylabel = "log-brightness η"
-    if cuts == "multipole":
+    if cuts == "multipole" and isinstance(field, MultipoleDisk):
+        r, tracks = _disk_tracks(field, latents, mmax)
+        off = 0.0
+        prev = None
+        for m, y in enumerate(tracks):
+            y = y - y.mean()
+            half = 1.1 * max(float(onp.abs(y).max()), 1e-12)
+            off -= half if prev is None else prev + half
+            prev = half
+            _draw_cuts(d, [((r, y + off), f"C{m}", None)], nfaint)
+            d.axhline(off, color="k", lw=0.4)
+            d.text(
+                1.01,
+                off,
+                "ln I₀ − μ" if m == 0 else f"c_{m} (cos)",
+                color=f"C{m}",
+                va="center",
+                transform=d.get_yaxis_transform(),
+            )
+        d.set_yticks([])
+        d.set_xlim(r[0], r[-1])
+        d.set_xlabel("disk-plane radius [mas]")
+        d.set_ylabel("profile, harmonics (offset)")
+    elif cuts == "multipole":
         polar = onp.asarray(
             jax.vmap(lambda z: _with_latent(field, z).polar_values())(latents)
         )
@@ -2137,3 +2189,62 @@ def _with_latent(field, latent):
     import equinox as eqx
 
     return eqx.tree_at(lambda f: f.latent, field, latent)
+
+
+def _disk_with(disk, latents):
+    """``disk`` with the latents of the dict ``{path: z}`` replaced."""
+    for path, z in latents.items():
+        disk = disk.set(path, z)
+    return disk
+
+
+def _disk_latents(disk, latents, key, n):
+    """The latents of the draws, as a dict of arrays ``(n, *shape)``."""
+    import jax
+    import jax.numpy as np
+
+    if not isinstance(disk.profile, RadialGP):
+        raise TypeError(
+            "plot_field_draws needs a MultipoleDisk with a RadialGP."
+        )
+    prior = getattr(disk.harmonics, "prior", None)
+    if latents is None:
+        if key is None:
+            raise ValueError("Prior draws need a PRNG key.")
+        paths = {"profile.z": disk.profile.z}
+        if prior is not None:
+            paths["harmonics.z"] = disk.harmonics.z
+        keys = jax.random.split(key, len(paths))
+        return {
+            p: jax.random.normal(k, (n, *z.shape), dtype=z.dtype)
+            for k, (p, z) in zip(keys, paths.items())
+        }
+    if not isinstance(latents, dict) or not latents:
+        raise ValueError(
+            "latents for a MultipoleDisk is a dict of paths such as "
+            "{'profile.z': ..., 'harmonics.z': ...}."
+        )
+    allowed = {"profile.z"} | ({"harmonics.z"} if prior is not None else set())
+    if set(latents) - allowed:
+        raise ValueError(f"latents keys must be among {sorted(allowed)}.")
+    return {p: np.asarray(z) for p, z in latents.items()}
+
+
+def _disk_tracks(disk, latents, mmax):
+    """Radii and the tracks ``ln I0 - mu``, ``c_1 .. c_M``, each ``(n, nr)``."""
+    import jax
+    import jax.numpy as np
+
+    lo, hi = disk.profile.extent()
+    r = np.linspace(lo, hi, 200)
+
+    def tracks(z):
+        d = _disk_with(disk, z)
+        out = [np.log(d.profile.intensity(r, 1.0)) - d.profile.mu]
+        if d.harmonics is not None and d.harmonics.degree:
+            c, _ = d.harmonics.coefficients(r)
+            out += list(c[: int(mmax)])
+        return np.stack(out)
+
+    y = onp.asarray(jax.vmap(tracks)(latents))
+    return onp.asarray(r), [y[:, k] for k in range(y.shape[1])]

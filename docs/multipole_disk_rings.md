@@ -442,6 +442,22 @@ plt.show()
 
 ![multipole_disk_rings output 15.1](generated/multipole_disk_rings_cell015_out01.png)
 
+The same plot accepts a `MultipoleDisk` with a `RadialGP` profile. Here are prior draws from the hyperparameters of the fit above (a Gaussian-process profile and first-order harmonics, $\ell = 5$ mas, the same inclination and position angle as the field). The bottom panel shows the profile, $\ln I_0(r)$ (the $m = 0$ track), and the cosine coefficient $c_1(r)$ of the first harmonic, each offset on its own track. For posterior draws, pass `latents={"profile.z": ..., "harmonics.z": ...}`. We show only the prior: the Laplace draws above come from a fit that this page does not rerun.
+
+```python
+from virgil.models import Harmonics, MultipoleDisk, MultipoleKernel, RadialGP
+
+disk = MultipoleDisk(
+    RadialGP(2.0, 30.0, sigma=2.0, ell=5.0),
+    harmonics=Harmonics(degree=1, prior=MultipoleKernel(ell_r=5.0, ell_theta=8.0, sigma=0.5, n=10)),
+    inc=50.0, pa=30.0, n_r=48,
+)
+plot_field_draws(disk, 1.0, jax.random.PRNGKey(3), n=300, npix=96, title="MultipoleDisk prior, inclination 50°, PA 30°")
+plt.show()
+```
+
+![multipole_disk_rings output 17.1](generated/multipole_disk_rings_cell017_out01.png)
+
 ## Summary
 
 A non-parametric `MultipoleDisk` fits the same data as the parametric family without being told there are three rings: its profile, colour and lopsidedness are Gaussian processes, and only the planet keeps its parametric form. It reaches a $\chi^2/N$ close to that of the family that made the data and recovers the planet's position and flux. It pays for its freedom with a less accurate profile (a larger rms error of $\ln I_0$ against the truth; both are printed above). The profile's length scale is a prior choice, since the two evidences differ by only a couple of nat; structure finer than the 2 to 3 mas half-fringe is not constrained in either fit; and the Laplace $\log Z$ comparison with the parametric model is only indicative.
@@ -570,4 +586,4 @@ plot_summary(gp_res.model(), data, r_out_mas=30.0, r_in_mas=gp_res.summary["mode
 plt.show()
 ```
 
-![multipole_disk_rings output 19.1](generated/multipole_disk_rings_cell019_out01.png)
+![multipole_disk_rings output 21.1](generated/multipole_disk_rings_cell021_out01.png)

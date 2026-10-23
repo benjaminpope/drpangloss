@@ -12,6 +12,13 @@ import pytest  # noqa: E402
 
 from virgil.imaging import Beam  # noqa: E402
 from virgil.fields import GaussianField, MultipoleField  # noqa: E402
+from virgil.models import (  # noqa: E402
+    GaussianRing,
+    Harmonics,
+    MultipoleDisk,
+    MultipoleKernel,
+    RadialGP,
+)
 from virgil.plotting import plot_field_draws  # noqa: E402
 
 KEY = jax.random.PRNGKey(0)
@@ -146,3 +153,59 @@ def test_posterior_principal_cut_is_log_brightness():
 def test_truth_needs_posterior():
     with pytest.raises(ValueError, match="truth"):
         plot_field_draws(_gp(), 0.5, KEY, n=4, truth=onp.ones((16, 16)))
+
+
+def _disk(harmonics=True):
+    kw = {}
+    if harmonics:
+        kw["harmonics"] = Harmonics(
+            degree=2,
+            prior=MultipoleKernel(ell_r=3.0, ell_theta=4.0, n=6),
+        )
+    return MultipoleDisk(
+        RadialGP(2.0, 10.0, sigma=1.0, ell=3.0),
+        inc=40.0,
+        pa=30.0,
+        n_r=12,
+        **kw,
+    )
+
+
+def test_disk_prior():
+    fig, ax = plot_field_draws(_disk(), 1.0, KEY, n=5, npix=24, n_cuts=2)
+    assert ax["d"].get_xlabel() == "disk-plane radius [mas]"
+    # ln I0 plus two harmonic tracks, each a bold and two faint lines
+    assert len(ax["d"].get_lines()) >= 3 * 3
+
+
+def test_disk_prior_profile_only():
+    fig, ax = plot_field_draws(
+        _disk(harmonics=False), 1.0, KEY, n=4, npix=24, n_cuts=1
+    )
+    assert "d" in ax
+
+
+def test_disk_posterior_latents():
+    z = jax.random.normal(KEY, (4, 12))
+    zh = jax.random.normal(KEY, (4, 2, 2, 6))
+    fig, ax = plot_field_draws(
+        _disk(),
+        1.0,
+        latents={"profile.z": z, "harmonics.z": zh},
+        npix=24,
+        snr=True,
+        n_cuts=2,
+    )
+    assert "c" in ax
+    plot_field_draws(_disk(), 1.0, latents={"profile.z": z}, npix=24)
+
+
+def test_disk_rejects_bad_input():
+    with pytest.raises(TypeError):
+        plot_field_draws(
+            MultipoleDisk(GaussianRing(5.0, 1.0)), 1.0, KEY, npix=24
+        )
+    with pytest.raises(ValueError):
+        plot_field_draws(
+            _disk(), 1.0, latents=jax.random.normal(KEY, (4, 12)), npix=24
+        )
