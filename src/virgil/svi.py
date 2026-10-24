@@ -180,6 +180,7 @@ def _laplace_started(base):
     return Guide
 
 
+# deliberate: named step: guide selection by name or callable
 def _make_guide(guide, posterior, init_loc_fn):
     if callable(guide) and not isinstance(guide, str):
         return guide(posterior, init_loc_fn=init_loc_fn)
@@ -199,6 +200,7 @@ def _make_guide(guide, posterior, init_loc_fn):
     )
 
 
+# deliberate: named step: the guide's Gauss–Newton starting width
 def _start_scale(
     guide_obj,
     model,
@@ -257,17 +259,6 @@ def _start_scale(
     return onp.linalg.cholesky(covariance), True
 
 
-def _converged(losses, window):
-    """Whether the mean loss of the last window is not significantly below
-    that of the window before it."""
-    if losses.size < 2 * window or not onp.all(onp.isfinite(losses[-window:])):
-        return False
-    last, before = losses[-window:], losses[-2 * window : -window]
-    drop = before.mean() - last.mean()
-    noise = math.sqrt((last.var() + before.var()) / window)
-    return bool(drop <= 2 * noise)
-
-
 def variational(
     model,
     priors,
@@ -296,10 +287,9 @@ def variational(
 
     Maximizes the ELBO with Adam on the posterior of
     [`numpyro_model`][virgil.likelihood.numpyro_model]. The guide starts at
-    ``start`` with the Gauss–Newton width, or with width ``init_scale`` if
-    there are ``regularizers`` or ``dense_start=False``; with ``start=None`` it
-    starts at the priors' medians with width ``init_scale``. Which guide to use
-    and how to check the result:
+    ``start`` with the Gauss–Newton width, or width ``init_scale`` given
+    ``regularizers``, ``dense_start=False`` or ``start=None`` (then at the
+    priors' medians). Guide choice and checks:
     [Variational inference](../variational_inference.md).
 
     Parameters
@@ -318,13 +308,10 @@ def variational(
         [`laplace_samples`][virgil.imaging.laplace_samples] for images).
     steps, num_particles, num_samples : int, optional
         Steps (3000), draws per ELBO estimate (8), draws returned (2000).
-    optimizer, learning_rate : optional
-        Optimizer (default ``optax.adam``) and step size (3e-3).
-    key, flat_coordinates : optional
-        ``key`` (default ``PRNGKey(0)``) and ``flat_coordinates`` as for
-        ``numpyro_model``.
-    dtype : {"float64", "float32"}, optional
-        Precision (default ``"float64"``, as for ``fit``).
+    optimizer, learning_rate, key, flat_coordinates, dtype : optional
+        Optimizer (default ``optax.adam``), its step size (3e-3), the PRNG key
+        (default ``PRNGKey(0)``), ``flat_coordinates`` as for ``numpyro_model``,
+        and the precision (default ``"float64"``, as for ``fit``).
     dense_start, init_scale : optional
         Start the width at the Gauss–Newton covariance (default ``True``;
         skipped, with a warning, given ``regularizers``). ``init_scale``
@@ -423,12 +410,33 @@ def variational(
         )
         samples = {k: onp.asarray(v) for k, v in samples.items()}
         khat = None
-        if psis:
-            khat = _khat(
-                k_psis, params, posterior, guide_obj, num_samples, point_mass
-            )
+        if psis and not point_mass:  # undefined for a point-mass guide
+            try:
+                from numpyro.infer.importance import psis_diagnostic
+            except ImportError:  # numpyro < 0.20
+                pass
+            else:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    khat = float(
+                        psis_diagnostic(
+                            k_psis,
+                            params,
+                            posterior,
+                            guide_obj,
+                            num_particles=num_samples,
+                        )
+                    )
     losses = onp.asarray(run.losses)
-    converged = _converged(losses, window)
+    # converged: the mean loss of the last window is not significantly below
+    # that of the window before it
+    last, before = losses[-window:], losses[-2 * window : -window]
+    if losses.size < 2 * window or not onp.all(onp.isfinite(last)):
+        converged = False
+    else:
+        drop = before.mean() - last.mean()
+        noise = math.sqrt((last.var() + before.var()) / window)
+        converged = bool(drop <= 2 * noise)
     if not converged:
         warnings.warn(
             f"The SVI loss had not settled after {steps} steps; raise "
@@ -450,23 +458,3 @@ def variational(
     return VariationalResult(
         samples, losses, guide_obj, params, converged, info
     )
-
-
-def _khat(key, params, posterior, guide, num_samples, point_mass):
-    """PSIS k̂ of the guide's importance weights, or None.
-
-    Undefined for the Laplace guide (a point mass while it is optimized)
-    and for numpyro releases without ``psis_diagnostic``.
-    """
-    if point_mass:
-        return None
-    try:
-        from numpyro.infer.importance import psis_diagnostic
-    except ImportError:  # numpyro < 0.20
-        return None
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        k = psis_diagnostic(
-            key, params, posterior, guide, num_particles=num_samples
-        )
-    return float(k)

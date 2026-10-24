@@ -144,8 +144,7 @@ def cv_task(
         The held-out fold label (a value in ``fold``).
     fold : (N,) int array
         The fold label of every point, e.g. from
-        [`dartboard_folds`][virgil.radio.dartboard_folds]; one task scores
-        one fold, so the caller loops over folds and settings.
+        [`dartboard_folds`][virgil.radio.dartboard_folds].
     fit_kwargs : callable
         ``fit_kwargs(setting)`` returns the mask-independent arguments of
         [`fit`][virgil.fitting.fit] (``model``, ``priors``, ``data=()``,
@@ -158,7 +157,7 @@ def cv_task(
         pass ``data=()`` in ``fit_kwargs``, or the held-out points leak into
         the fit. Same function for every task.
     init : dict, optional
-        Starting values for the fit, the same for every task.
+        Starting values for the fit.
     groups : (N,) int array, optional
         A label per point (uv annulus, spectral window): the record breaks the
         held-out sums down by group.
@@ -429,6 +428,7 @@ def aggregate(records, larger_is_simpler=True):
     return out
 
 
+# deliberate: named step of aggregate: the per-group curves
 def _group_curves(records, index, find, n_settings):
     labels = sorted({g for r in records for g in r["group_labels"]})
     col = {g: i for i, g in enumerate(labels)}

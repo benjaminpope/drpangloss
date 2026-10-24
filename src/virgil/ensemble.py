@@ -615,6 +615,7 @@ def _extend(axis, best, limits):
     return True
 
 
+# deliberate: test seam (tests/test_ensemble.py)
 def _grow_grid(
     evaluate, lengths, sigmas, length_limits, sigma_limits, growths
 ):
@@ -648,6 +649,7 @@ def _grow_grid(
     return ls, ss, values
 
 
+# deliberate: test seam (tests/test_ensemble.py)
 def _elongation(data, star, field_mas):
     """Axis ratio and position angle (deg) of an elliptical-Gaussian fit.
 
@@ -678,6 +680,7 @@ def _elongation(data, star, field_mas):
     return best[1], best[2]
 
 
+# deliberate: test seam (tests/test_ensemble.py)
 def _oriented(template, pa_deg, pixel_scale_mas):
     """``template`` on a grid whose "up" axis points at ``pa_deg``.
 
@@ -889,6 +892,7 @@ def _corner(curve):
         return None
 
 
+# deliberate: test seam (tests/test_ensemble.py)
 def _on_common_grid(image, npix, scale):
     """The image's pixels on the common grid, flux conserved.
 
@@ -911,17 +915,6 @@ def _parts(model, star):
     env, fs = model.env, float(model.star.flux)
     fe = float(env.flux)
     return env, fe / (fs + fe)
-
-
-def _mean_model(pixels, fraction, scale, star):
-    """The scene whose image carries ``fraction`` of the total flux."""
-    brightness = pixels / pixels.sum()
-    if not star:
-        return Image.from_brightness(brightness, scale)
-    image = Image.from_brightness(
-        brightness, scale, flux=fraction / (1.0 - fraction)
-    )
-    return System(star=PointSource(), env=image)
 
 
 def _mixture(images, fractions, chosen, star):
@@ -1148,7 +1141,14 @@ def combine(data, groups, *, spec=None, star=True):
     stack = onp.stack([weighted[j] for j in chosen])
     fraction = float(onp.mean([fractions[j] for j in chosen]))
     mean = stack.mean(axis=0)
-    image = _mean_model(mean, fraction, scale, star)
+    brightness = mean / mean.sum()
+    if star:  # the scene whose image carries ``fraction`` of the total flux
+        env = Image.from_brightness(
+            brightness, scale, flux=fraction / (1.0 - fraction)
+        )
+        image = System(star=PointSource(), env=env)
+    else:
+        image = Image.from_brightness(brightness, scale)
     # In units of the mean image's unit-sum brightness.
     std = stack.std(axis=0) / mean.sum()
     return Ensemble(
