@@ -709,16 +709,8 @@ def fit(
         ``loss[t - ftol_window] - loss[t] < ftol_abs`` (the unscaled loss;
         off if ``None``).
     post_step : callable, optional
-        Adam only: a jax-traceable map from the free parameters (a dict of
-        arrays by path, in the coordinates they are fitted in, e.g. an
-        image's ``log_brightness``) to the same structure, applied after
-        every update inside the jitted step, so the next loss and gradient
-        see the projected parameters. Adam's moments are left as they are.
-        Not with L-BFGS or LM (a projection breaks L-BFGS's curvature pairs)
-        or ``precondition``. ``info["post_step"]`` records whether one was used.
-        Source: [Charles et al. (2026)](../references.md#dorito) blur an
-        image's log-parameters after each step to stop flux collapsing into a
-        few pixels.
+        Adam only: a jax-traceable map of the free parameters (a dict by path)
+        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
