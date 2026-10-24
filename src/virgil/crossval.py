@@ -158,7 +158,7 @@ def cv_task(
         pass ``data=()`` in ``fit_kwargs``, or the held-out points leak into
         the fit. Same function for every task.
     init : dict, optional
-        Starting values for the fit.
+        Starting values for the fit, the same for every task.
     groups : (N,) int array, optional
         A label per point (uv annulus, spectral window): the record breaks the
         held-out sums down by group.

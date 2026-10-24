@@ -396,10 +396,11 @@ class _Objective(eqx.Module):
             else:
                 raise NoLeastSquaresForm(
                     f"The {type(prior).__name__} prior on {path!r} has no "
-                    "least-squares form; use Normal, Uniform, ImproperUniform or "
-                    "LogUniform or AngleVector priors (or one with a flat coordinate, "
-                    "such as an isotropic inclination; an AngleVector takes von Mises "
-                    "priors on angles), or fit with method='lbfgs' or 'adam'."
+                    "least-squares form; use Normal, Uniform, ImproperUniform "
+                    "or LogUniform or AngleVector priors (or one with a flat "
+                    "coordinate, such as an isotropic inclination; an "
+                    "AngleVector takes von Mises priors on angles), or fit "
+                    "with method='lbfgs' or 'adam'."
                 )
         return np.concatenate(parts)
 
@@ -1642,7 +1643,8 @@ def gauss_newton_diag(
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
     ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
-    (1 - b)`` (unsmoothed pixels): a scale, not the curvature, at weak weights. It is the scale
+    (1 - b)`` (the softmax's, unsmoothed pixels). The data JᵀJ and other terms
+    are dropped there, so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 
