@@ -23,6 +23,7 @@ from astropy.io import fits
 Simbad = None
 
 
+# deliberate: a test seam (tests stand in for astroquery and check the hint)
 def _simbad():
     """The astroquery ``Simbad`` class, imported on first use."""
     if Simbad is not None:
@@ -36,11 +37,6 @@ def _simbad():
         ) from err
 
     return simbad_class
-
-
-def _scalar(value):
-    """First element of a scalar, list or array (per-table metadata)."""
-    return onp.ravel(onp.asarray(value))[0]
 
 
 def _deprecated(name, instead):
@@ -123,19 +119,18 @@ def save(dic, filename=None, datadir=None, verbose=False):
     """
     Save an ImPlaneIA dictionary as an OIFITS2 file.
 
-    This is [`virgil.oifits.write_oifits`][virgil.oifits.write_oifits]
-    plus the ImPlaneIA extras: the ``CTRS_EQT`` column and ``PSCALE``/``ISZ``
-    keywords in ``OI_ARRAY``, a filename built from ``info``, and target
-    coordinates queried from SIMBAD.
+    [`virgil.oifits.write_oifits`][virgil.oifits.write_oifits] plus the
+    ImPlaneIA extras: the ``CTRS_EQT`` column and ``PSCALE``/``ISZ`` keywords
+    in ``OI_ARRAY``, a filename built from ``info``, and target coordinates
+    from SIMBAD.
 
     Parameters
     ----------
     dic : dict
-        ImPlaneIA dictionary with the tables ``OI_WAVELENGTH``, ``OI_VIS``,
-        ``OI_VIS2`` and ``OI_T3`` and an ``info`` dict holding ``TARGET``,
-        ``INSTRUME``, ``MASK``, ``FILT`` and ``MJD``, plus ``PSCALE``
-        (mas/pixel), ``ISZ`` and ``STAXY``/``CTRS_EQT`` (in ``info`` or an
-        ``OI_ARRAY`` table). Phases are in degrees. ``dic`` is not modified.
+        Tables ``OI_WAVELENGTH``, ``OI_VIS``, ``OI_VIS2``, ``OI_T3`` and an
+        ``info`` dict with ``TARGET``, ``INSTRUME``, ``MASK``, ``FILT``,
+        ``MJD``, ``PSCALE`` (mas/pixel), ``ISZ`` and ``STAXY``/``CTRS_EQT``
+        (in ``info`` or ``OI_ARRAY``). Phases in degrees; not modified.
     filename : str or os.PathLike, optional
         Output filename. If omitted, the name is built from ``TARGET``,
         ``INSTRUME``, ``MASK``, ``FILT`` and ``MJD``.
@@ -156,7 +151,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
         raise ValueError("save(): dic is None; nothing to write.")
     dic = copy.deepcopy(dic)
     info = dic["info"]
-    info["MJD"] = _scalar(info["MJD"])
+    info["MJD"] = onp.ravel(onp.asarray(info["MJD"]))[0]  # a scalar
     array = dic.get("OI_ARRAY", {})
     staxy = onp.asarray(info.get("STAXY", array.get("STAXY")), dtype=float)
     ctrs_eqt = info.get("CTRS_EQT", array.get("CTRS_EQT"))
@@ -211,6 +206,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
         print(f"### OIFITS CREATED ({path}).")
 
 
+# deliberate: the one network call, kept apart so save() reads without it
 def _query_simbad(name):
     """Return SIMBAD ``(ra, dec, spectyp, pmra, pmdec, plx)`` for OI_TARGET.
 

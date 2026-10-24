@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `fit(method="adam")` now runs in jitted chunks of 200 steps (same trajectory, step for step), so `time_limit` and `progress` apply to it, and it reports convergence: `info["converged"]` is `True` if the `ftol_abs` plateau stop fired or `grad_norm <= gtol`, else `False` with `info["stop"]` `"limit"`, `"time"` or `"non-finite"` (it was `None`, so an Adam fit that hits `max_steps` now warns). New keywords: `adam_eps` (`optax.adam`'s `eps`), `ftol_abs` and `ftol_window` (stop when the loss fell by less than `ftol_abs` over the last `ftol_window` steps); `info["loss_history"]` is the unscaled loss before each Adam step. `ftol_window` below 1 raises `ValueError`. #534
 - Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
   and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
   of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's
@@ -60,6 +61,7 @@ anything before 1.0 may change between minor versions.
 ### Changed
 
 - Inlined about sixty per cent of the single-use private helpers in `detection`, `limits`, `grid_fit`, `gains`, `spectra`, `observables`, `plotting` and `_deprecate`; no behaviour change.
+- Code shape (#536, batch I): `oifits`, `oidata`, `amigo` and `legacy` inline 23 single-use private helpers in `oifits.py` and 3 elsewhere, and trim long docstrings to the calling contract. Behaviour and OIFITS round trips are unchanged.
 - The disk, image and quicklook pipeline modules lose a dozen single-use private helpers and a few docstring lines; no behaviour change.
 - `ComplexVisData.term` takes `chi2="auto"|"direct"|"toeplitz"` (default `"auto"`). `fit` then uses the exact Toeplitz (dirty-beam) χ² where it applies: one fixed `Image`, a fixed `alpha`, `offsets=False`, no `antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and at least `toeplitz_min_points` points and `toeplitz_points_per_pixel` per pixel and ddid (`set_ft_defaults`). Otherwise the direct term is used; `"toeplitz"` raises a `ValueError` naming the unmet condition. The beams take about 24 N² bytes of device memory per ddid; auto stays direct above `toeplitz_max_bytes` (4 GB), and `chi2="direct"` opts out. `FitResult.info["likelihood_forms"]` says what ran (and why auto fell back), and a Toeplitz term's `info["chi2"]` is re-evaluated directly at the result. `numpyro_model` and the training fits of `cross_validate` stay direct.
 - `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged.
