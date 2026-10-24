@@ -105,32 +105,6 @@ class GaussNewtonMass(dict):
     condition = None
 
 
-def _prior_residuals(path, distribution, value):
-    """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
-
-    ``None`` means the prior is flat on its support or in the coordinate ``fit``
-    optimizes it in, so it adds nothing to a least-squares objective.
-    """
-    import numpyro.distributions as dist
-
-    if _flat_coordinate(distribution) is not None:
-        return None
-    distribution = _base(distribution)
-    if is_angle_vector(distribution):
-        return distribution.residuals(value)  # ``value`` is the vector
-    if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
-        return None
-    if isinstance(distribution, dist.Normal):
-        return np.ravel((value - distribution.loc) / distribution.scale)
-    raise NoLeastSquaresForm(
-        f"The {type(distribution).__name__} prior on {path!r} has no "
-        "least-squares form; use Normal, Uniform, ImproperUniform or "
-        "LogUniform or AngleVector priors (or one with a flat coordinate, "
-        "such as an isotropic inclination; an AngleVector takes von Mises "
-        "priors on angles), or fit with method='lbfgs' or 'adam'."
-    )
-
-
 def _traced(prior):
     """``prior`` with its Python-number parameters as JAX arrays, so that a new prior
     bound does not recompile the jitted solvers (equinox treats numbers as static).
@@ -142,38 +116,6 @@ def _traced(prior):
         return leaf
 
     return jax.tree.map(to_array, prior)
-
-
-def _warn_if_field_hyperparameter(model, path):
-    """Warn when a Gaussian process's sigma or length is fitted by MAP."""
-    parent, _, name = path.rpartition(".")
-    hyper = (
-        "sigma",
-        "length_mas",
-        "ell",
-        "ell_r",
-        "ell_theta",
-        "length_r",
-        "length_theta",
-    )
-    if name in hyper and parent:
-        if isinstance(
-            model.get(parent),
-            (
-                GaussianField,
-                RadialGP,
-                RadialGPFunction,
-                MultipoleKernel,
-                MultipoleField,
-            ),
-        ):
-            warnings.warn(
-                f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
-                "field are biased at the MAP (towards a flat field). Fix "
-                "them, choose them from the evidence, or sample them.",
-                UserWarning,
-                stacklevel=external_stacklevel(),
-            )
 
 
 def _log_jacobian(bijection, z):
@@ -230,7 +172,38 @@ class _Objective(eqx.Module):
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
-                _warn_if_field_hyperparameter(model, path)
+                parent, _, name = path.rpartition(".")
+                hyper = (
+                    "sigma",
+                    "length_mas",
+                    "ell",
+                    "ell_r",
+                    "ell_theta",
+                    "length_r",
+                    "length_theta",
+                )
+                if (
+                    name in hyper
+                    and parent
+                    and isinstance(
+                        model.get(parent),
+                        (
+                            GaussianField,
+                            RadialGP,
+                            RadialGPFunction,
+                            MultipoleKernel,
+                            MultipoleField,
+                        ),
+                    )
+                ):
+                    warnings.warn(
+                        f"Fitting {path!r} by MAP: the hyperparameters of a "
+                        "Gaussian field are biased at the MAP (towards a flat "
+                        "field). Fix them, choose them from the evidence, or "
+                        "sample them.",
+                        UserWarning,
+                        stacklevel=external_stacklevel(),
+                    )
             if is_flux_param(path):
                 _check_positive_flux_prior(path, prior)
 
@@ -348,10 +321,6 @@ class _Objective(eqx.Module):
             self.model, self.paths, [values[p] for p in self.paths]
         )
 
-    @property
-    def _has_term_norms(self):
-        return any(getattr(t, "has_log_norm", False) for t in self.likelihoods)
-
     def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
 
@@ -369,11 +338,14 @@ class _Objective(eqx.Module):
             for i, (m, d) in enumerate(zip(models, self.data))
         ]
 
-    def _check_least_squares(self, term_norms=True):
-        """Raise :class:`NoLeastSquaresForm` if the objective has no residual
-        vector: fitted error terms, data with gains, regularizers without
-        ``residuals`` and, if ``term_norms``, likelihood terms with a
-        ``log_norm``."""
+    def residuals(self, z):
+        """Residual vector whose half sum of squares is ``loss(z)`` + const.
+
+        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
+        least-squares form (use L-BFGS or Adam).
+        """
+        import numpyro.distributions as dist
+
         if self.noise:
             raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
@@ -392,7 +364,7 @@ class _Objective(eqx.Module):
                 "A likelihood term with a scalar χ² (no residual vector) has "
                 "no least-squares form; fit with method='lbfgs' or 'adam'."
             )
-        if term_norms and self._has_term_norms:
+        if any(getattr(t, "has_log_norm", False) for t in self.likelihoods):
             raise NoLeastSquaresForm(
                 "Likelihood terms with a log_norm (a fitted RV jitter, or "
                 "the Jacobian of a position-angle prior) have no "
@@ -404,14 +376,6 @@ class _Objective(eqx.Module):
                     f"{type(regularizer).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
-
-    def residuals(self, z):
-        """Residual vector whose half sum of squares is ``loss(z)`` + const.
-
-        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
-        least-squares form (use L-BFGS or Adam).
-        """
-        self._check_least_squares()
         model = self.build(z)
         values = self.constrain(z)
         parts = self.data_residuals(model)
@@ -419,9 +383,24 @@ class _Objective(eqx.Module):
         for regularizer in self.regularizers:
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
-            r = _prior_residuals(path, prior, self._prior_value(values, path))
-            if r is not None:
-                parts.append(r)
+            value = self._prior_value(values, path)
+            if _flat_coordinate(prior) is not None:
+                continue  # flat in the fitted coordinate: adds nothing
+            prior = _base(prior)
+            if is_angle_vector(prior):
+                parts.append(prior.residuals(value))  # ``value`` is the vector
+            elif isinstance(prior, (dist.Uniform, dist.ImproperUniform)):
+                continue
+            elif isinstance(prior, dist.Normal):
+                parts.append(np.ravel((value - prior.loc) / prior.scale))
+            else:
+                raise NoLeastSquaresForm(
+                    f"The {type(prior).__name__} prior on {path!r} has no "
+                    "least-squares form; use Normal, Uniform, ImproperUniform or "
+                    "LogUniform or AngleVector priors (or one with a flat coordinate, "
+                    "such as an isotropic inclination; an AngleVector takes von Mises "
+                    "priors on angles), or fit with method='lbfgs' or 'adam'."
+                )
         return np.concatenate(parts)
 
     # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
@@ -756,15 +735,20 @@ def fit(
             dtype,
         )
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
-        method = method or (
-            "lm"
-            if _has_residuals(problem, z0)
-            and not any(
-                getattr(r, "prefers_lbfgs", False)
-                for r in problem.regularizers
-            )
-            else "lbfgs"
-        )
+        if not method:
+            try:
+                jax.eval_shape(problem.residuals, z0)
+            except NoLeastSquaresForm:
+                method = "lbfgs"
+            else:
+                method = (
+                    "lbfgs"
+                    if any(
+                        getattr(r, "prefers_lbfgs", False)
+                        for r in problem.regularizers
+                    )
+                    else "lm"
+                )
         # Optimizers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
@@ -871,7 +855,12 @@ def fit(
             else None,
             "precondition_rounds": rounds,
             "at_bound": _at_bound(problem, values),
-            "derived": _derived(problem, values),
+            "derived": {
+                k: onp.asarray(v)
+                for term in problem.likelihoods
+                if hasattr(term, "derived")
+                for k, v in term.derived(values).items()
+            },
         }
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     return FitResult(
@@ -927,18 +916,6 @@ class _Budget:
                 }
             )
         return elapsed
-
-
-def _derived(problem, values):
-    """Quantities a likelihood term computes from the fit that are not sites
-    (a radio term's profiled error scales ``ŝ``), by name."""
-    out = {}
-    for term in problem.likelihoods:
-        if hasattr(term, "derived"):
-            out.update(
-                {k: onp.asarray(v) for k, v in term.derived(values).items()}
-            )
-    return out
 
 
 # A parameter is at a bound of its prior when it is within this fraction of
@@ -1107,21 +1084,6 @@ def gauss_newton_mass(
     return out
 
 
-def _correlation_condition(covariance):
-    """The condition number of the covariance scaled to unit diagonal."""
-    if not onp.all(onp.isfinite(covariance)):
-        return onp.inf
-    diagonal = onp.diag(covariance)
-    if not onp.all(diagonal > 0):
-        return onp.inf
-    scale = onp.sqrt(diagonal)
-    correlation = covariance / onp.outer(scale, scale)
-    eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
-    if eigenvalues[0] <= 0.0:
-        return onp.inf
-    return float(eigenvalues[-1] / eigenvalues[0])
-
-
 def _gauss_newton_covariance(problem, z, dense=True):
     """F⁻¹ for F = JᵀJ + diag(P) over the flat coordinates of ``problem``.
 
@@ -1131,8 +1093,18 @@ def _gauss_newton_covariance(problem, z, dense=True):
     """
     covariance, ok = _covariance(problem, z, dense)
     covariance, ok = onp.asarray(covariance), bool(ok)
-    condition = _correlation_condition(covariance) if dense else None
-    return covariance, ok, condition
+    if not dense:
+        return covariance, ok, None
+    # condition number of the covariance scaled to unit diagonal
+    diagonal = onp.diag(covariance)
+    if not (onp.all(onp.isfinite(covariance)) and onp.all(diagonal > 0)):
+        return covariance, ok, onp.inf
+    scale = onp.sqrt(diagonal)
+    correlation = covariance / onp.outer(scale, scale)
+    eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
+    if eigenvalues[0] <= 0.0:
+        return covariance, ok, onp.inf
+    return covariance, ok, float(eigenvalues[-1] / eigenvalues[0])
 
 
 @eqx.filter_jit
@@ -1221,15 +1193,6 @@ def _covariance(problem, z, dense):
     else:
         positive = np.all(covariance > 0)
     return covariance, ok_factor & finite & positive
-
-
-def _has_residuals(problem, z):
-    """Whether the whole objective has a least-squares form."""
-    try:
-        jax.eval_shape(problem.residuals, z)
-    except NoLeastSquaresForm:
-        return False
-    return True
 
 
 # The solvers below are jitted at module level, with the problem as an
@@ -1398,16 +1361,6 @@ def _lm_tolerance(problem, z0, scale, gtol):
 _DENSE_LM = 200
 
 
-def _lm_linear_solver(z0, cg_steps):
-    """QR for a few coordinates, else CG on the normal equations, run for exactly
-    ``cg_steps`` steps (no more than the number of coordinates).
-    """
-    n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
-    if n <= _DENSE_LM:
-        return lx.QR()
-    return lx.Normal(lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n)))
-
-
 # Steps per chunk when fit has a time limit or reports progress: LM steps
 # (a Jacobian and a solve each) cost far more than L-BFGS steps.
 _LM_CHUNK = 50
@@ -1426,7 +1379,15 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     damping reset, so the path can differ slightly from an unchunked run.
     """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
-    linear_solver = _lm_linear_solver(z0, cg_steps)
+    # QR for a few coordinates, else CG on the normal equations, run for
+    # exactly ``cg_steps`` steps (no more than the number of coordinates).
+    n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
+    if n <= _DENSE_LM:
+        linear_solver = lx.QR()
+    else:
+        linear_solver = lx.Normal(
+            lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n))
+        )
     chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
     masks = _gauge_masks(problem)
     z, steps = z0, 0
