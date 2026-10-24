@@ -375,11 +375,11 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
-| `_khat` | [Vehtari et al. (2015)](#vehtari2024), [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract) | after |
 | `variational` | [De Cao, Titov & Aziz (2019)](#decao2019), [arXiv:1904.04676](https://arxiv.org/abs/1904.04676), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190404676D/abstract) | after |
 | `variational` | [Frank, Leike & Enßlin (2021)](#frank2021), [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract) | after |
 | `variational` | [Kingma et al. (2016)](#kingma2016), [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract) | after |
 | `variational` | [Kucukelbir et al. (2016)](#kucukelbir2017), [arXiv:1603.00788](https://arxiv.org/abs/1603.00788), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160300788K/abstract) | after |
+| `variational` | [Vehtari et al. (2015)](#vehtari2024), [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract) | after |
 
 ## Compared, not ported
 
