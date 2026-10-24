@@ -476,7 +476,7 @@ class ComplexVisData(eqx.Module):
         -----
         In your own jitted code pass the term as an argument with
         ``eqx.filter_jit``; a ``jax.jit`` closure bakes the data in as
-        constants.
+        constants (see the radio interferometry page).
         """
         # deliberate: points are padded with zero weight to a multiple of
         # chunk_size and mapped with lax.map (never vmap-ed); a function (not a
