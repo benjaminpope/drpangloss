@@ -69,16 +69,16 @@ priors = nuis.priors()  # just cal.flux
 
 ## A CLEAN start
 
-`radio_clean.clean` gives a first image and its restoring beam (`fit_beam` fits the beam to the dirty beam's core). **Known problem ([virgil#551](https://github.com/benjaminpope/virgil/issues/551)):** on this dataset (dynamic range about 1000) `clean` diverges if it runs long: the peak residual rises inside a minor cycle and the model flux reaches 10³ Jy by 12,000 iterations, so a lower `threshold` or a larger `niter` gives a nonsense model. The cell below stops at 1000 iterations, before that happens, and does not reach the 3σ threshold it asks for. We compare reconstructions through that beam, which is what a perfect image would look like at this resolution.
+`radio_clean.clean` gives a first image and its restoring beam (`fit_beam` fits the beam to the dirty beam's core). We compare reconstructions through that beam, which is what a perfect image would look like at this resolution.
 
 ```python
 sigma_img = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))  # thermal noise of the natural-weighted image
-res = clean(data, N, S, deconvolver="hogbom", niter=1000, threshold=3 * sigma_img, usemask="auto-multithresh")
+res = clean(data, N, S, deconvolver="hogbom", threshold=3 * sigma_img, usemask="auto-multithresh")
 print(f"CLEAN stopped on '{res.stop}' after {res.iterations} iterations; beam {res.beam[0]:.0f} x {res.beam[1]:.0f} mas")
 ```
 
 ```text
-CLEAN stopped on 'niter' after 1000 iterations; beam 49 x 46 mas
+CLEAN stopped on 'threshold' after 563 iterations; beam 49 x 46 mas
 ```
 
 ## Fitting an Image
@@ -100,7 +100,7 @@ print(result.info["likelihood_forms"], f"converged={result.info['converged']} in
 ```
 
 ```text
-['toeplitz'] converged=True in 3722 steps
+['toeplitz'] converged=True in 2792 steps
 ```
 
 ## The image against the truth
@@ -154,9 +154,9 @@ print(f"fit reports χ² = {result.info['chi2'][0]:.0f} for {int(result.info['nd
 ```
 
 ```text
-CLEAN χ²/N = 1.047, flux 0.994 Jy (true 1.000), rms − truth 0.009 of peak
-fit   χ²/N = 1.001, flux 1.009 Jy (true 1.000), rms − truth 0.004 of peak
-fit reports χ² = 120063 for 120000 data
+CLEAN χ²/N = 1.005, flux 0.999 Jy (true 1.000), rms − truth 0.002 of peak
+fit   χ²/N = 1.003, flux 1.008 Jy (true 1.000), rms − truth 0.003 of peak
+fit reports χ² = 120350 for 120000 data
 ```
 
 ## Notes
