@@ -723,7 +723,9 @@ def fit(
     likelihoods, time_limit, progress : sequence, float and callable, optional
         Further terms, e.g. [`PositionData.term`][virgil.orbits.PositionData.term];
         wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
-        ``grad_norm``, ``elapsed``.
+        ``grad_norm``, ``elapsed`` (``grad_norm`` is NaN for Adam). A
+        ``time_limit`` that runs out on Adam's or LM's last chunk reports
+        ``"limit"``, not ``"time"``.
     adam_eps, ftol_abs, ftol_window : float, float and int, optional
         Adam only: ``optax.adam``'s ``eps``; and a plateau stop once at least
         ``ftol_window`` steps have run, at the first step ``t`` where
@@ -742,7 +744,7 @@ def fit(
     Returns
     -------
     FitResult
-        Model, values and diagnostics; warns if LM or L-BFGS did not converge
+        Model, values and diagnostics; warns if LM, L-BFGS or Adam did not converge
         (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
@@ -752,6 +754,12 @@ def fit(
     if time_limit is not None and not time_limit >= 0:
         raise ValueError(
             f"time_limit must be a number of seconds, not {time_limit}."
+        )
+    if ftol_window < 1:
+        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
+    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
+        raise ValueError(
+            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
         )
     if precondition not in (None, False, "diag"):
         raise ValueError(
@@ -802,8 +810,7 @@ def fit(
         ]
         scale = float(max(sum(ndata), 1))
         # Numbers go to the jitted solvers as arrays, which are traced, so
-        # that new values do not recompile. The step limits of LM and Adam
-        # set a loop's length, so they stay static.
+        # that new values do not recompile.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         stop = grad_norm = None
         rounds = []
@@ -847,7 +854,8 @@ def fit(
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
         if method == "adam" and not converged:
-            converged = bool(grad_norm <= gtol)
+            tolerance = _lm_tolerance(problem, z0, traced_scale, gtol)
+            converged = bool(grad_norm <= tolerance)
             stop = None if converged else stop or "limit"
         if not math.isfinite(loss) and converged is not False:
             # E.g. LM or Adam ending on NaN parameters.
@@ -2165,8 +2173,8 @@ _ADAM_CHUNK = 200
 
 
 @eqx.filter_jit
-def _adam(problem, carry, scale, rates, count, metric=None):
-    """``count`` (at most ``_ADAM_CHUNK``) Adam steps from ``carry = (z, state)``:
+def _adam(problem, carry, scale, rates, count, chunk, metric=None):
+    """``count`` (at most ``chunk``, the buffer's static length) Adam steps from ``carry = (z, state)``:
     the new carry and the unscaled loss before each step (NaN after ``count``)."""
     # With a metric, Adam runs in its scaled coordinates: its rms divisor
     # follows the size of the gradient, the metric the width of the
@@ -2186,7 +2194,7 @@ def _adam(problem, carry, scale, rates, count, metric=None):
             loss * scale
         )
 
-    losses = np.full(_ADAM_CHUNK, np.nan, dtype=np.result_type(scale))
+    losses = np.full(chunk, np.nan, dtype=np.result_type(scale))
     return jax.lax.fori_loop(0, count, step, (carry, losses))
 
 
@@ -2199,6 +2207,7 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
     ``"time"`` or ``"non-finite"`` or ``None``.
     """
     ftol_abs, window = ftol
+    nan = float("nan")  # deliberate: Adam's progress reports no gradient norm
     start = z0 if metric is None else jax.tree.map(np.zeros_like, z0)
     carry, history, steps, stop = (
         (start, optax.adam(0.0).init(start)),
@@ -2209,12 +2218,18 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
     while steps < limit:
         count = min(_ADAM_CHUNK, limit - steps)
         new, losses = _adam(
-            problem, carry, scale, rates, np.asarray(count), metric
+            problem,
+            carry,
+            scale,
+            rates,
+            np.asarray(count),
+            _ADAM_CHUNK,
+            metric,
         )
         new_losses = onp.asarray(losses)[:count] + float(problem.loss_constant)
-        losses_so_far = onp.concatenate([*history, new_losses])
         if ftol_abs is not None:
             # exact: the first step t at which the plateau test holds
+            losses_so_far = onp.concatenate([*history, new_losses])
             t = onp.arange(max(window, steps), steps + count)
             gap = losses_so_far[t - window] - losses_so_far[t]
             hit = onp.flatnonzero(gap < ftol_abs)
@@ -2227,8 +2242,12 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
                         scale,
                         rates,
                         np.asarray(fired - steps),
+                        _ADAM_CHUNK,
                         metric,
                     )
+                budget.finish(
+                    fired, lambda: (float(losses_so_far[fired]), nan)
+                )
                 return (
                     carry[0] if metric is None else metric.to_z(carry[0]),
                     fired,
@@ -2241,7 +2260,6 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
         if not onp.isfinite(new_losses[-1]):
             stop = "non-finite"
             break
-        nan = float("nan")  # the gradient norm is not tracked per chunk
         if (
             budget.check(steps, lambda: (float(new_losses[-1]), nan))
             and steps < limit

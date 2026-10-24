@@ -37,6 +37,17 @@ def test_fit_with_progress_compiles_once(method, monkeypatch):
     start = BinaryModelCartesian(60.0, -20.0, 0.005)
     reports = []
     options = {"max_steps": 10} if method == "adam" else {}
+    # new numbers (limits, rates, budget) must not recompile
+    later = (
+        {
+            "max_steps": 7,
+            "learning_rate": 0.5,
+            "adam_eps": 1e-6,
+            "time_limit": 1e6,
+        }
+        if method == "adam"
+        else {}
+    )
     fit(start, PRIORS, data, method=method, progress=reports.append, **options)
     assert len(reports) > 1  # several chunks ran
     with count_compiles() as compiles:
@@ -46,7 +57,7 @@ def test_fit_with_progress_compiles_once(method, monkeypatch):
             data,
             method=method,
             progress=reports.append,
-            **options,
+            **later,
         )
     assert compiles == []
 

@@ -393,6 +393,7 @@ def _fit_both(tdata, nuis, scene, priors, init, **kw):
     return out
 
 
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.slow
 def test_fit_reaches_the_direct_optimum():
     problem = _fit_problem()

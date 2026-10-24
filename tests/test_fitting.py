@@ -375,7 +375,8 @@ def test_adam_loss_history_and_eps():
     history = result.info["loss_history"]
     assert history.shape == (result.info["steps"],) == (40,)
     assert "loss_history" not in fit(START, PRIORS, DATA, max_steps=3).info
-    assert history[-1] > result.info["loss"]  # the loss before the last step
+    before_last = _adam(max_steps=39).info["loss"]
+    assert history[-1] == pytest.approx(before_last, rel=1e-12)
     other = _adam(adam_eps=1.0)
     assert not onp.allclose(
         other.values["dra"], result.values["dra"], rtol=1e-6
@@ -413,6 +414,37 @@ def test_adam_stops_at_its_time_limit_and_reports_convergence(monkeypatch):
     assert short.info["converged"] is False and short.info["stop"] == "limit"
     loose = _adam(max_steps=3, gtol=1e30)
     assert loose.info["converged"] is True and loose.info["stop"] is None
+
+
+def test_adam_ftol_with_a_time_limit(monkeypatch):
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)
+    reports = []
+    result = _adam(
+        max_steps=120,
+        ftol_abs=1e30,  # fires at the first step the window allows
+        ftol_window=10,
+        time_limit=1e6,
+        progress=reports.append,
+    )
+    assert result.info["steps"] == 10 and result.info["converged"] is True
+    assert result.info["stop"] is None
+    assert reports[-1]["steps"] == 10  # the final report is at the stop
+    # an expired budget stops first, at the end of the first chunk
+    late = _adam(max_steps=120, ftol_abs=1e-30, ftol_window=10, time_limit=0.0)
+    assert late.info["stop"] == "time" and late.info["steps"] == 7
+
+
+def test_bad_ftol_abs_is_rejected():
+    for bad in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ftol_abs"):
+            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
+
+
+def test_bad_ftol_window_is_rejected():
+    with pytest.raises(ValueError, match="ftol_window"):
+        fit(START, PRIORS, DATA, method="adam", ftol_window=0)
 
 
 def test_poles_of_isotropic_priors_are_not_prior_bounds():
