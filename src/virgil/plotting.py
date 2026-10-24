@@ -65,10 +65,11 @@ def set_style():
     matplotlib.rcParams.update(STYLE)
 
 
+# deliberate: used by notebooks/radio_clean.ipynb. Restores only its own
+# keys: ``plt.rc_context`` would restore ``backend`` and close Jupyter's figures.
 @contextlib.contextmanager
 def _style_context(style=None):
-    """Temporarily apply ``style``; unlike ``plt.rc_context`` it restores only
-    its own keys (restoring ``backend`` closes Jupyter's open figures)."""
+    """Temporarily apply ``style`` (default: the virgil style)."""
     style = STYLE if style is None else style
     saved = {key: matplotlib.rcParams[key] for key in style}
     matplotlib.rcParams.update(style)
@@ -89,50 +90,8 @@ def _styled(fn):
     return wrapper
 
 
-def _centres_to_extent(x_axis, y_axis):
-    """Return an imshow ``extent`` whose pixels are centred on the samples.
-
-    ``imshow`` places ``extent`` at the outer pixel *edges*, so grid sample
-    positions (pixel centres) are padded by half a sample spacing.
-    """
-
-    def _edges(axis):
-        axis = onp.asarray(axis, dtype=float).reshape(-1)
-        half = 0.5 * (axis[1] - axis[0]) if axis.size > 1 else 0.5
-        return float(axis[0] - half), float(axis[-1] + half)
-
-    return [*_edges(x_axis), *_edges(y_axis)]
-
-
 def _is_sky_key(key, name):
     return key == name or key.endswith("." + name)
-
-
-def _image_axes(grid, coord_keys):
-    """Plotted x/y keys (``dra``/``ddec`` if present) and ``image[y, x]``.
-
-    Returns ``(x_key, y_key, image, is_sky)``.
-    """
-    grid = onp.asarray(grid)
-    if grid.ndim != 2 or len(coord_keys) != 2:
-        raise ValueError(
-            f"Expected a 2D grid with two coordinate keys; got shape "
-            f"{grid.shape} for keys {list(coord_keys)}. Reduce the flux axis "
-            "first, e.g. loglike_im.max(axis=...)."
-        )
-    dra = [k for k in coord_keys if _is_sky_key(k, "dra")]
-    ddec = [k for k in coord_keys if _is_sky_key(k, "ddec")]
-    if len(dra) == 1 and len(ddec) == 1:
-        x_key, y_key = dra[0], ddec[0]
-        is_sky = True
-    else:
-        x_key, y_key = coord_keys
-        is_sky = False
-    if list(coord_keys).index(x_key) == 0:
-        image = grid.T
-    else:
-        image = grid
-    return x_key, y_key, image, is_sky
 
 
 def _range_aware_float_formatter(vmin, vmax, scale=1.0):
@@ -595,19 +554,6 @@ def truth_cartesian_and_polar(truth):
     return truth_cart, truth_polar
 
 
-def _reversed_cmap(cmap):
-    """Reverse a colour map given by name or as a ``Colormap``.
-
-    Maps whose name already ends in ``_r`` are taken as deliberately
-    reversed and kept.
-    """
-    if isinstance(cmap, str):
-        cmap = matplotlib.colormaps[cmap]
-    if cmap.name.endswith("_r"):
-        return cmap
-    return cmap.reversed()
-
-
 def _format_sigma_or_percent_value(value):
     """Format a confidence level compactly, e.g. ``97.7`` or ``5``."""
     formatted = f"{float(value):.3g}"
@@ -671,6 +617,7 @@ def _convert_flux(values, units):
     )
 
 
+# deliberate: named step: resolves the plotted axes (early returns)
 def _grid_axes(values, grid, kind, flux_param):
     """``(values, coord_keys)``; a full log-likelihood grid is reduced to its
     maximum over the flux axis."""
@@ -778,7 +725,11 @@ def plot_grid_map(
         # colour map so that deeper limits keep the same colour.
         default_cmap = defaults["cmap"]
         if units != "flux":
-            default_cmap = _reversed_cmap(default_cmap)
+            # maps whose name already ends in ``_r`` are deliberately reversed
+            if isinstance(default_cmap, str):
+                default_cmap = matplotlib.colormaps[default_cmap]
+            if not default_cmap.name.endswith("_r"):
+                default_cmap = default_cmap.reversed()
     else:
         default_label = defaults["label"]
         default_log = defaults["log"]
@@ -824,15 +775,36 @@ def plot_grid_map(
             ax.legend(loc="best")
         return fig, ax
 
-    x_key, y_key, image, is_sky = _image_axes(values, coord_keys)
+    grid_values = onp.asarray(values)
+    if grid_values.ndim != 2 or len(coord_keys) != 2:
+        raise ValueError(
+            f"Expected a 2D grid with two coordinate keys; got shape "
+            f"{grid_values.shape} for keys {list(coord_keys)}. Reduce the "
+            "flux axis first, e.g. loglike_im.max(axis=...)."
+        )
+    dra = [k for k in coord_keys if _is_sky_key(k, "dra")]
+    ddec = [k for k in coord_keys if _is_sky_key(k, "ddec")]
+    is_sky = len(dra) == 1 and len(ddec) == 1
+    x_key, y_key = (dra[0], ddec[0]) if is_sky else coord_keys
+    # ``image[y, x]``: transpose when the grid's first axis is x
+    image = (
+        grid_values.T if list(coord_keys).index(x_key) == 0 else grid_values
+    )
     finite = image[onp.isfinite(image)]
     norm = None
     if log and finite.size and onp.all(finite > 0):
         norm = matplotlib.colors.LogNorm()
+    # ``imshow`` places ``extent`` at the outer pixel edges: pad the sample
+    # positions (pixel centres) by half a spacing
+    extent = []
+    for axis in (grid[x_key], grid[y_key]):
+        axis = onp.asarray(axis, dtype=float).reshape(-1)
+        half = 0.5 * (axis[1] - axis[0]) if axis.size > 1 else 0.5
+        extent += [float(axis[0] - half), float(axis[-1] + half)]
     im = ax.imshow(
         image,
         origin="lower",
-        extent=_centres_to_extent(grid[x_key], grid[y_key]),
+        extent=extent,
         cmap=cmap,
         norm=norm,
         aspect="equal" if is_sky else "auto",
@@ -869,29 +841,6 @@ def plot_grid_map(
         ax.set(xlabel=x_key, ylabel=y_key)
     ax.set_title(title)
     return fig, ax
-
-
-def _sky_map(values, grid):
-    """A sky map with axes ``(dra, ddec)``, and those two axes (transposed
-    when ``ddec`` comes before ``dra``)."""
-    keys = [key for key in grid if not is_flux_param(key)]
-    found = []
-    for name in ("dra", "ddec"):
-        matches = [key for key in keys if _is_sky_key(key, name)]
-        if len(matches) != 1:
-            raise ValueError(
-                f"grid needs exactly one {name!r} axis; keys are {list(grid)}."
-            )
-        found.append(matches[0])
-    if len(keys) != 2:
-        raise ValueError(
-            f"A sky map needs exactly two coordinate keys; got {keys}."
-        )
-    values = onp.asarray(values, dtype=float)
-    if keys.index(found[0]) == 1:
-        values = values.T
-    dra, ddec = (onp.asarray(grid[key]) for key in found)
-    return values, dra, ddec
 
 
 @renamed()
@@ -951,7 +900,25 @@ def plot_contrast_curve(
     else:
         if grid is None:
             raise ValueError("Pass grid with a limit map.")
-        sky_values, dra, ddec = _sky_map(values, grid)
+        # a sky map with axes (dra, ddec), transposed when ddec comes first
+        keys = [key for key in grid if not is_flux_param(key)]
+        found = []
+        for name in ("dra", "ddec"):
+            matches = [key for key in keys if _is_sky_key(key, name)]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"grid needs exactly one {name!r} axis; "
+                    f"keys are {list(grid)}."
+                )
+            found.append(matches[0])
+        if len(keys) != 2:
+            raise ValueError(
+                f"A sky map needs exactly two coordinate keys; got {keys}."
+            )
+        sky_values = onp.asarray(values, dtype=float)
+        if keys.index(found[0]) == 1:
+            sky_values = sky_values.T
+        dra, ddec = (onp.asarray(grid[key]) for key in found)
         profile = radial_profile(
             sky_values, dra, ddec, center=center, r_max=r_max, bins=bins
         )
@@ -1050,29 +1017,23 @@ def _selections(value):
     return [value]
 
 
-def _flux_selection_label(flux):
-    if flux is None:
-        return None
-    if onp.ndim(flux) == 0:
-        flux = float(flux)
-        if flux <= 0.0:
-            return "flux 0"
-        return f"flux {flux:.3g} (Δmag {float(flux_to_delta_mag(flux)):.2f})"
-    lo, hi = flux
-    return f"flux {lo:.3g}–{hi:.3g}"
-
-
-def _sep_selection_label(sep_bin):
-    if sep_bin is None:
-        return None
-    lo, hi = sep_bin
-    return f"{lo:g}–{hi:g} mas"
-
-
 def _selection_labels(flux, sep_bin):
     """Labels of a flux and separation selection (None is left out)."""
-    labels = (_flux_selection_label(flux), _sep_selection_label(sep_bin))
-    return [label for label in labels if label is not None]
+    labels = []
+    if flux is not None and onp.ndim(flux) == 0:
+        flux = float(flux)
+        labels.append(
+            "flux 0"
+            if flux <= 0.0
+            else f"flux {flux:.3g} (Δmag {float(flux_to_delta_mag(flux)):.2f})"
+        )
+    elif flux is not None:
+        lo, hi = flux
+        labels.append(f"flux {lo:.3g}–{hi:.3g}")
+    if sep_bin is not None:
+        lo, hi = sep_bin
+        labels.append(f"{lo:g}–{hi:g} mas")
+    return labels
 
 
 def _legend_outside(ax):
@@ -1915,13 +1876,12 @@ def plot_field_draws(
     n : int, optional
         Prior draws (default 100).
     cuts : {"principal", "axes", "multipole"}, optional
-        Panel d. ``"principal"``: the central row and column of a
-        GaussianField. ``"axes"``: lines through the centre at the position
-        angles ``axes_pa``. ``"multipole"``: the cosine amplitudes ``a_m(r)``,
-        ``m = 0..mmax``, of ``η = Σ a_m cos mθ + b_m sin mθ`` (the residual
-        without ``mean``; ``a_0`` is the azimuthal mean) against disk-plane
-        radius, one offset track per ``m``. For a MultipoleDisk, ``ln I₀ - μ``
-        and the cosine coefficients ``c_m(r)`` of ``I/I₀``. Default:
+        Panel d. ``"principal"``: central row and column of a GaussianField.
+        ``"axes"``: lines through the centre at ``axes_pa``.
+        ``"multipole"``: cosine amplitudes ``a_m(r)`` of η = Σ a_m cos mθ +
+        b_m sin mθ (the residual without ``mean``; ``a_0`` is the azimuthal
+        mean), one offset track per ``m = 0..mmax``; for a MultipoleDisk,
+        ``ln I₀ - μ`` and the coefficients ``c_m(r)`` of ``I/I₀``. Default:
         ``"multipole"`` for a MultipoleField or disk, ``"principal"`` for a
         GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
@@ -2186,6 +2146,7 @@ def _disk_with(disk, latents):
     return disk
 
 
+# deliberate: named step: draws or validates the disk latents
 def _disk_latents(disk, latents, key, n):
     """The latents of the draws, as a dict of arrays ``(n, *shape)``."""
     import jax
@@ -2218,6 +2179,7 @@ def _disk_latents(disk, latents, key, n):
     return {p: np.asarray(z) for p, z in latents.items()}
 
 
+# deliberate: named step: vmapped tracks of the disk cuts
 def _disk_tracks(disk, latents, mmax):
     """Radii and the tracks ``ln I0 - mu``, ``c_1 .. c_M``, each ``(n, nr)``."""
     import jax

@@ -177,6 +177,7 @@ def _area(sigma_pix):
     return 1.0 if sigma_pix == 0 else 2.0 * onp.pi * sigma_pix**2
 
 
+# deliberate: tests call the masking rule directly
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     """A simplified ``auto-multithresh``: the connected regions of the
     beam-smoothed residual above ``low`` × rms that hold a pixel above
@@ -200,6 +201,7 @@ def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
 # ----------------------------------------------------------------------
 
 
+# deliberate: the ~100-line minor cycle reads better apart from the major loop
 def _minor_cycle(
     residual, psf, scales, mask, gain, niter, threshold, bias, patch
 ):
@@ -497,11 +499,10 @@ def clean(
         Odd image side, so the PSF peaks on a pixel (``Image`` wants even).
     pixel_scale_mas : float
     deconvolver : {"hogbom", "multiscale"}
-        Point components or Gaussians. Every minor cycle is Clark's windowed
-        loop, so there is no separate ``"clark"``.
+        Point components or Gaussians (every minor cycle is Clark's windowed
+        loop: no ``"clark"``).
     scales_mas : sequence of float, optional
-        Multi-scale FWHMs in mas, 0 a point, as in ``imaging.clean``; default
-        0, 5 and 15 pixels.
+        Multi-scale FWHMs in mas, 0 a point; default 0, 5 and 15 pixels.
     weighting, robust, uvtaper
         As for [`dirty_image`][virgil.radio.ComplexVisData.dirty_image].
     niter, gain, threshold : int, float, float
@@ -513,11 +514,9 @@ def clean(
     cyclefactor, minpsffraction, maxpsffraction : float
         A minor cycle stops at ``max(threshold, f × peak)``, ``f =
         clip(cyclefactor × PSF sidelobe, minpsffraction, maxpsffraction)``.
-    smallscalebias : float
-        Preference for small scales, 0 to 1.
-    psfpatch : int
-        Half-width in pixels of the PSF window subtracted per iteration, at
-        most ``npix - 1``.
+    smallscalebias, psfpatch : float, int
+        Preference for small scales (0 to 1); half-width in pixels of the PSF
+        window subtracted per iteration, at most ``npix - 1``.
     mask : array of bool, optional
         Where to clean; default the whole image.
     usemask : {"user", "auto-multithresh"}, sidelobethreshold, noisethreshold,
@@ -526,13 +525,10 @@ def clean(
         (a simplified CASA version, see the guide).
     restoringbeam : (bmaj_mas, bmin_mas, pa_deg), optional
         Default: fitted to the PSF above ``psfcutoff``.
-    uv_cell : float, optional
-        Density cell in wavelengths; default ``1/FoV``.
-    chunk_size : int
-        Visibilities transformed at a time.
-    time_limit : float, optional
-        Seconds after which no further major cycle starts.
-    verbose : bool
+    uv_cell, chunk_size, time_limit, verbose
+        Density cell in wavelengths (default ``1/FoV``); visibilities
+        transformed at a time; seconds after which no further major cycle
+        starts; print progress.
 
     Returns
     -------

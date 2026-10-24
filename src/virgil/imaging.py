@@ -315,7 +315,7 @@ class Laplacian(_ImageRegulariser):
 _B3_SPLINE = (1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16)
 
 
-def _smooth(image, step):
+def _smooth(image, step):  # deliberate: named step of starlet
     """The B3-spline smoothing of the starlet, with taps ``step`` apart."""
     for axis in (0, 1):
         n = image.shape[axis]
@@ -567,7 +567,7 @@ def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
     return ceiling
 
 
-def _squared_visibilities(d):
+def _squared_visibilities(d):  # deliberate: named step of second_moment_fwhm
     """Spatial frequency (cycles per radian), V² and error of the unflagged
     visibilities, as flat arrays; empty for data without amplitudes of their own.
     """
@@ -600,14 +600,13 @@ def _squared_visibilities(d):
 def second_moment_fwhm(data, v2_min=0.3):
     """The FWHM (mas) of the Gaussian that the short baselines see.
 
-    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)``, with
-    ρ = B / λ in cycles per radian, and any normalized source has this form to
-    second order in ρ. A straight line through the origin is fitted by weighted
-    least squares to ``-ln V²`` against ρ² on the unflagged samples with
-    ``V² ≥ v2_min``, where the source is resolved only a little. It needs no
-    image and no fit. It is the rms width of the whole source, a star included,
-    so it is meaningless when a bright unresolved component (flux fraction above
-    about 0.55) keeps V² above ``v2_min`` on every baseline: use
+    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)`` (ρ = B /
+    λ, cycles per radian), and any normalized source has this form to second
+    order in ρ. It is fitted by weighted least squares on the unflagged samples
+    with ``V² ≥ v2_min``, needing no image and no fit. It is the rms width of
+    the whole source, a star included, so it is meaningless when a bright
+    unresolved component (flux fraction above about 0.55) keeps V² above
+    ``v2_min`` on every baseline: use
     [`envelope_fwhm`][virgil.imaging.envelope_fwhm] there.
 
     Parameters
@@ -650,21 +649,14 @@ def image_field(
     aperture_mas=None,
     largest_mas=500.0,
 ):
-    """The width (mas) of an image field that the data size.
+    """The width (mas) of an image field that suits the data.
 
-    The field is ``field_fwhms`` times the source's FWHM, between a floor and a
-    ceiling that come from the data (unflagged baselines only, see
-    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]):
-
-    * **Wanted field:** ``field_fwhms × fwhm_mas``. Without ``fwhm_mas`` it is
-      the FWHM the short baselines see
-      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]); with no
-      visibility amplitudes to measure it, the wanted field is the ceiling.
-    * **Floor:** ``inner_elements × λ / (2 B_max)``, so an unresolved source
-      still gets room around it.
-    * **Ceiling:** [`field_of_view`][virgil.imaging.field_of_view] (with
-      ``largest_mas`` and ``aperture_mas``). It wins over the floor if they
-      cross.
+    The field is ``field_fwhms × fwhm_mas`` (without ``fwhm_mas``, the
+    [`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]; with no
+    visibility amplitudes to measure it, the ceiling), clipped to a floor of
+    ``inner_elements × λ / (2 B_max)`` and a ceiling of
+    [`field_of_view`][virgil.imaging.field_of_view] on the unflagged baselines
+    (the ceiling wins if they cross).
 
     Parameters
     ----------
@@ -675,8 +667,8 @@ def image_field(
         visibilities.
     field_fwhms : float, optional
         The field in FWHMs of the source (6 by default; 3 to 8 are reasonable).
-        A larger field spends pixels on empty sky, where an image free to place
-        flux can scatter it in islands.
+        A larger field spends pixels on empty sky, where flux can scatter in
+        islands.
     inner_elements : float, optional
         The floor, in resolution elements λ / (2 B_max) (4 by default).
     aperture_mas : float, optional
@@ -699,7 +691,7 @@ def image_field(
     return float(min(ceiling, max(floor, wanted)))
 
 
-def _complex_visibilities(d):
+def _complex_visibilities(d):  # deliberate: named step of dirty_image
     """Visibility estimates at a dataset's uv samples and their 0/1 weights: the
     least-squares estimate from the modes for DISCO data, the visibilities
     themselves for amplitudes with absolute phases.
@@ -756,24 +748,23 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
 
     ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, with uniform weights
     on the informed samples: the image convolved with the dirty beam, plus
-    noise. It peaks at one for a lone point source. For AMIGO DISCO data the
-    visibilities are the least-squares estimate from the modes, normalized to
-    |V| = 1 on average on the shortest baselines (the modes are blind to the
-    total flux).
+    noise; it peaks at one for a lone point source. For AMIGO DISCO data the
+    visibilities are the least-squares estimate from the modes, with |V| = 1 on
+    average on the shortest baselines (the modes are blind to the total flux).
 
     Parameters
     ----------
     data : OIData or sequence of OIData
-        The data; closure phases alone cannot make a dirty image.
+        The data; closure phases alone cannot make a dirty image
+        (``ValueError``).
     npix : int
         Number of pixels on a side.
     pixel_scale_mas : float
         Pixel size in mas.
     flux_ratio : float, optional
-        If the scene is a star at the origin plus extended emission with this
-        flux relative to the star, the star is removed first (the best-fitting
-        point source at the origin is subtracted, then the image is scaled by
-        ``(1 + flux_ratio) / flux_ratio``), so the map shows the extended
+        Flux of extended emission relative to a star at the origin: the
+        best-fitting point source at the origin is subtracted and the image
+        scaled by ``(1 + flux_ratio) / flux_ratio``, so the map shows the
         emission alone.
 
     Returns
@@ -879,13 +870,12 @@ def starting_image(
 
     Fits an analytic star (if ``star``) plus a circular Gaussian envelope to the
     data, then builds an image of ``field_fwhms`` envelope FWHMs (capped by
-    ``largest_mas`` and the field λ / B_min of
-    [`field_of_view`][virgil.imaging.field_of_view]), with pixels ``oversample``
-    times finer than Nyquist and the fitted flux. Fit it with
+    ``largest_mas`` and [`field_of_view`][virgil.imaging.field_of_view]), with
+    pixels ``oversample`` times finer than Nyquist. Fit it with
     ``fit(start, image_priors(start), data, regularizers)``; see
     [imaging with regularizers](../imaging_rml.md). With ``star=True`` the
-    envelope's flux ratio is fixed unless fitted: add a prior on ``"env.flux"``
-    to ``image_priors(start)`` (a lone Image is normalized, so it has no flux).
+    envelope's flux ratio is fixed unless you add a prior on ``"env.flux"`` to
+    ``image_priors(start)`` (a lone Image is normalized, so has no flux).
 
     Parameters
     ----------
@@ -902,7 +892,8 @@ def starting_image(
         Starting pixels: the fitted Gaussian, or the positive part of the
         [`dirty_image`][virgil.imaging.dirty_image] minus the star.
     hole_mas : float, optional
-        Radius of a hole in the support under the star; ``0.5 * beam(data).minor_mas`` works well.
+        Radius of a hole in the support under the star
+        (``0.5 * beam(data).minor_mas`` works well).
     field_fwhms, inner_elements : float, optional
         Field in envelope FWHMs; least field in resolution elements λ / (2 B_max).
     aperture_mas : float, optional
@@ -1036,10 +1027,8 @@ def beam(data):
 def convolve_beam(image, pixel_scale_mas, beam):
     """An image convolved with a Gaussian beam: the image at the data's resolution.
 
-    A regularized image can put structure on scales finer than the beam, where
-    the data constrain it only weakly. Convolved with the beam (the "restored"
-    image of radio astronomy), it shows only what the data resolve, which is
-    the fair way to compare two reconstructions: convolve both. The kernel is
+    The "restored" image of radio astronomy: it shows only what the data
+    resolve, so convolve both reconstructions to compare them. The kernel is
     an elliptical Gaussian with the beam's FWHMs and position angle (North to
     East), normalized to unit sum on an odd grid centred on a pixel. Flux
     beyond the edge is taken to be zero, so structure within about a beam of
@@ -1053,7 +1042,8 @@ def convolve_beam(image, pixel_scale_mas, beam):
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     beam : Beam
-        The beam, usually [`beam(data)`][virgil.imaging.beam].
+        The beam (FWHMs in mas, position angle in degrees), usually
+        [`beam(data)`][virgil.imaging.beam].
 
     Returns
     -------
@@ -1219,7 +1209,9 @@ def _atom_norms(parts, observations, fluxes, scale, rotation):
 
 
 @eqx.filter_jit
-def _clean_step(parts, observations, fluxes, scores, scale, rotation):
+def _clean_step(
+    parts, observations, fluxes, scores, scale, rotation
+):  # deliberate: jit boundary
     """χ², and the best pixel and Gauss–Newton step of one CLEAN iteration: the
     largest ``g_p² / |J e_p|²`` with ``g_p < 0`` (``scores`` is ``1 / |J e_p|²``,
     zero outside the support).
@@ -1245,7 +1237,9 @@ def _clean_chi2(parts, observations, fluxes, scale, rotation):
 
 
 @eqx.filter_jit
-def _clean_columns(parts, observations, fluxes, indices, scale, rotation):
+def _clean_columns(
+    parts, observations, fluxes, indices, scale, rotation
+):  # deliberate: jit boundary
     """The residuals, and their derivatives by the fluxes at ``indices``."""
     residuals = _clean_residuals(parts, observations, scale, rotation)
 
@@ -1324,7 +1318,7 @@ def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
     return System(base=base, clean=image)
 
 
-def _joint_refit(
+def _joint_refit(  # deliberate: named step of clean
     base, components, observations, priors, geometry, spectrum, dtype
 ):
     """Fit the base's free parameters (``priors``, keyed by paths in the base) and
@@ -1371,29 +1365,24 @@ class CleanResult:
     Attributes
     ----------
     model : SourceModel
-        The base scene with the components, ``System(base=base,
-        clean=Image(...))``, or for a System base its components and
-        ``clean`` side by side. The Image is non-zero only on the
-        components, and its ``flux`` is their total relative to the base
-        (with the components' spectrum, if one was given). Without a base
-        scene, the Image alone; with no components, the base alone.
+        ``System(base=base, clean=Image(...))`` (a System base's components and
+        ``clean`` side by side). The Image is non-zero only on the components,
+        and its ``flux`` is their total relative to the base. Without a base,
+        the Image alone; with no components, the base alone.
     components : array, shape (npix, npix)
-        The components' total flux in each pixel of the grid,
-        ``Σ_s G_s * F_s`` summed over the scales, relative to the base
-        scene's weight (without a base scene, normalized to unit sum).
+        The components' total flux in each pixel, ``Σ_s G_s * F_s`` over the
+        scales, relative to the base's weight (without a base, unit sum).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     chi2_red : array
-        χ² per data point before each iteration; the last entry is that of
-        the final model.
+        χ² per data point before each iteration; the last entry is the final
+        model's.
     stop : str
-        Why CLEAN stopped: ``"target"`` (χ² per point reached
-        ``target_chi2_red``), ``"stalled"`` (χ² stopped falling, even after
-        a major cycle) or ``"max_iterations"``.
+        ``"target"`` (``target_chi2_red`` reached), ``"stalled"`` (χ² stopped
+        falling, even after a major cycle) or ``"max_iterations"``.
     components_by_scale : array, shape (n_scales, npix, npix)
-        The components' fluxes ``F_s`` at each scale, at the pixel at the
-        centre of their shape, in the units of ``components``. Each sums to
-        that scale's share of the total flux.
+        The fluxes ``F_s`` at each scale, at the centre of their shape, in the
+        units of ``components``; each sums to that scale's share of the flux.
     scales_mas : tuple of float
         The FWHM of each scale's Gaussian shape (0 for a point).
     """
@@ -1459,21 +1448,24 @@ def clean(
         Fixed scene (e.g. a star) to add components to, not offset if a System;
         fraction of each step taken, in (0, 1].
     max_iterations, target_chi2_red, refit_every : int, float and int, optional
-        Iteration limit; χ² per point to stop at; iterations per major cycle (0: none).
+        Iteration limit; χ² per point to stop at; iterations per major cycle
+        (0: none).
     stall_window, stall_tolerance : int and float, optional
         Stop when χ² falls by less than this fraction in this many iterations.
     base_priors, refresh_norms : dict and bool, optional
-        Base priors refitted, and pixel norms ``|J e_p|`` recomputed (costly), each major cycle.
+        Base priors refitted, and pixel norms ``|J e_p|`` recomputed (costly),
+        each major cycle.
     spectrum, support, init : Spectrum and array-like, optional
         Shared spectrum (default grey; needs a base); boolean ``(npix, npix)``
         mask, e.g. [`circular_support`][virgil.models.circular_support];
-        non-negative starting fluxes ``(npix, npix)`` or ``(n_scales, npix, npix)``.
+        non-negative starting fluxes ``(npix, npix)`` or
+        ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float and str, optional
         Grid position angle (match ``data.uv_grid.rotation_deg``, see
         [`Image`][virgil.models.Image]); [precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
-        FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both); in
-        [0, 1), the down-weighting ``1 - scale_bias s / max(scales_mas)`` of scale ``s``.
+        FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);
+        in [0, 1), the down-weighting ``1 - scale_bias s / max(scales_mas)``.
 
     Returns
     -------
@@ -2087,9 +2079,9 @@ def log_evidence(model, data, path="env"):
     ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
     conditional on those held in ``model`` (or sample them: log-uniform priors
     from [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
-    on a field's ``sigma`` and ``ell`` for an Image). Exact only for a linear
-    model, and it assumes correct error bars (see
-    [`error_scale`][virgil.imaging.error_scale]). It uses the quoted errors, so
+    log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
+    Exact only for a linear model, and it assumes correct error bars (see
+    [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
     no ``noise=`` terms or per-dataset models. See
     [Evidence](../imaging_gp.md#choosing-and-l-from-the-evidence).
     Source: MacKay (1992), [references](../references.md#mackay1992).
@@ -2127,7 +2119,9 @@ def log_evidence(model, data, path="env"):
 
 
 @eqx.filter_jit
-def _render_latents(model, latent_path, latents, npix, fov_mas):
+def _render_latents(
+    model, latent_path, latents, npix, fov_mas
+):  # deliberate: jit boundary
     """The whole model rendered with each of ``latents`` at its field.
 
     ``latent_path`` is one path with ``latents`` an array, or a tuple of
@@ -2153,10 +2147,9 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
     Only the latents vary, so the spread is narrower than the full posterior's
     where other parameters correlate with the image. Exact only for a linear
-    model, assumes correct error bars and is conditional on the hyperparameters
-    held in ``model`` (or sample them: ``gp_priors`` for a ``MultipoleDisk``,
-    your own log-uniform priors on a field's ``sigma`` and ``ell`` for an
-    Image). It uses the quoted errors.
+    model, assumes correct error bars, uses the quoted errors and is conditional
+    on the hyperparameters held in ``model`` (or sample them, as for
+    [`log_evidence`][virgil.imaging.log_evidence]).
 
     Parameters
     ----------
@@ -2344,44 +2337,19 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
-def _check_scalable_blocks(datasets):
-    """Refuse data whose covariance is not ``s_b² D`` per block (gains, closure
-    offsets, marginalized or finite-``prior_width`` extras): their nuisance widths
-    do not scale with the quoted errors.
-    """
-    for i, d in enumerate(datasets):
-        reasons = []
-        if d.gains is not None:
-            reasons.append("calibration gains (with_gains)")
-        if d.phase_offsets is not None:
-            reasons.append("closure-phase offsets (with_closure_offsets)")
-        for b in d.extras:
-            if b.model_dependent_covariance:
-                reasons.append(f"a marginalized {b.kind} block")
-            elif getattr(b, "prior_width", None) is not None:
-                reasons.append(f"a {b.kind} block with a finite prior_width")
-        if reasons:
-            raise ValueError(
-                f"error_scale(by_observable=True) cannot rescale dataset {i}: "
-                f"it has {', '.join(reasons)}, whose nuisance widths do not "
-                "scale with the quoted errors. Estimate the scales without "
-                "them, or fit the nuisance widths as noise terms."
-            )
-
-
 def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
     Returns the factor ``s`` to multiply every error bar by for consistency with
-    the fit (``s < 1``: bars too large; ``s > 1``: too small, or the model is
-    inadequate). It solves ``s² = χ² / (N − γ)``, with ``γ`` the effective number
-    of parameters the data measure; see [Error scale](../imaging_gp.md#are-the-error-bars-right).
-    Fit, call this, rescale with
-    [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale], refit.
-    Rescale before choosing hyperparameters: bars that are too large make the
-    evidence over-regularize. ``s`` much greater than 1 means a failed or
-    inadequate model, not a noise fix: unmodelled structure is absorbed into ``s``.
-    It uses the quoted errors, so no ``noise=`` terms or per-dataset models.
+    the fit (``s < 1``: bars too large), solving ``s² = χ² / (N − γ)`` with ``γ`` the effective number of
+    parameters the data measure; see
+    [Error scale](../imaging_gp.md#are-the-error-bars-right). Fit, call this,
+    rescale with [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale],
+    refit, and do so before choosing hyperparameters (bars that are too large
+    make the evidence over-regularize). ``s`` much greater than 1 means a failed
+    or inadequate model, not a noise fix: unmodelled structure is absorbed into
+    ``s``. It uses the quoted errors, so no ``noise=`` terms or per-dataset
+    models.
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
@@ -2411,7 +2379,28 @@ def error_scale(model, data, path="env", *, by_observable=False):
     r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     datasets = _as_list(data)
     if by_observable:
-        _check_scalable_blocks(datasets)
+        # Refuse data whose covariance is not s_b² D per block: their nuisance
+        # widths do not scale with the quoted errors.
+        for i, d in enumerate(datasets):
+            reasons = []
+            if d.gains is not None:
+                reasons.append("calibration gains (with_gains)")
+            if d.phase_offsets is not None:
+                reasons.append("closure-phase offsets (with_closure_offsets)")
+            for b in d.extras:
+                if b.model_dependent_covariance:
+                    reasons.append(f"a marginalized {b.kind} block")
+                elif getattr(b, "prior_width", None) is not None:
+                    reasons.append(
+                        f"a {b.kind} block with a finite prior_width"
+                    )
+            if reasons:
+                raise ValueError(
+                    f"error_scale(by_observable=True) cannot rescale dataset {i}: "
+                    f"it has {', '.join(reasons)}, whose nuisance widths do not "
+                    "scale with the quoted errors. Estimate the scales without "
+                    "them, or fit the nuisance widths as noise terms."
+                )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
         beta = _block_precisions(r, onp.asarray(jac), rows, counts)
@@ -2447,22 +2436,19 @@ def l_curve(
     """Fit a model over a range of weights for one regularizer.
 
     The weights are fitted from largest to smallest, each starting from the
-    previous solution, which is faster and more stable than starting every
-    fit afresh. Plot ``penalty`` against ``chi2`` (both on log axes) to see
-    the trade-off between fitting the data and regularizing the image, and
-    compare [`LCurve.corner`][virgil.imaging.LCurve.corner] and
-    [`LCurve.discrepancy`][virgil.imaging.LCurve.discrepancy] with
-    the images either side: there is usually a wide range of good weights.
+    previous solution. Plot ``penalty`` against ``chi2`` (log axes) to see the
+    trade-off, and compare [`LCurve.corner`][virgil.imaging.LCurve.corner] and
+    [`LCurve.discrepancy`][virgil.imaging.LCurve.discrepancy] with the images
+    either side: there is usually a wide range of good weights.
 
     Parameters
     ----------
     model, priors, data
         As for [`fit`][virgil.fitting.fit].
     regularizer : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
-        The regularizer whose ``weight`` is swept (its own weight is
-        ignored).
+        The regularizer whose ``weight`` is swept (its own is ignored).
     weights : sequence of float
-        The weights to try.
+        The weights to try (sorted internally, largest first).
     others : sequence, optional
         Further regularizers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.
@@ -2528,11 +2514,11 @@ def _residual_vector(model, observations):
 def chi2_by_observable(model, data, path=None):
     """Raw χ² of a model for each kind of observable, on the quoted errors.
 
-    The errors are the data's own (no ``noise=`` terms). Closure phases
-    from four or more telescopes contribute their whitened combinations,
-    and their periodic penalty rows (see
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals]) add to
-    the χ² but not to the count.
+    The errors are the data's own (no ``noise=`` terms). Closure phases from
+    four or more telescopes contribute their whitened combinations, and their
+    periodic penalty rows (see
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals]) add to the χ²
+    but not to the count.
 
     Parameters
     ----------
@@ -2548,12 +2534,12 @@ def chi2_by_observable(model, data, path=None):
     Returns
     -------
     dict
-        ``chi2``, ``n`` and ``chi2_red`` (χ² per independent datum), each
-        a dict from the kinds of observable (``"vis"``, ``"phi"``, then
-        any extras) and ``"total"`` to a number. With ``path``,
-        ``n_gamma``: MacKay's number of well-determined latent
-        parameters, ``Σ s²/(1 + s²)`` over the singular values ``s`` of
-        the Jacobian of the whitened residuals by the latents.
+        ``chi2``, ``n`` and ``chi2_red`` (χ² per independent datum), each a
+        dict from the kinds of observable (``"vis"``, ``"phi"``, then any
+        extras) and ``"total"`` to a number. With ``path``, ``n_gamma``:
+        MacKay's number of well-determined latent parameters,
+        ``Σ s²/(1 + s²)`` over the singular values ``s`` of the Jacobian of
+        the whitened residuals by the latents.
     """
     observations = _as_list(data)
     rows, counts = _observable_blocks(observations)
@@ -2595,30 +2581,13 @@ def _no_baselines(observations):
     return None
 
 
-def _visibility_frequencies(observations):
-    """Spatial frequency B/λ of each visibility row of the residuals."""
-    rho = []
-    for d in observations:
-        b = onp.hypot(
-            onp.ravel(onp.asarray(d.u, float)),
-            onp.ravel(onp.asarray(d.v, float)),
-        )
-        lam = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), b.shape)
-        if d.vis_index is not None:
-            keep = onp.asarray(d.vis_index)
-            b, lam = b[keep], lam[keep]
-        rho.append(b / lam)
-    return onp.concatenate(rho)
-
-
 def short_baseline_residual(model, data, quantile=0.2):
     """Mean whitened visibility residual on the shortest baselines.
 
-    A reconstruction that loses flux on large scales leaves a coherent
-    residual on the shortest spatial frequencies though the total χ² looks
-    fine (the test of MACIM, Ireland et al. 2006). The residuals are
-    (model − data)/σ, so they have unit variance if the model is right and
-    the mean of ``n`` of them has standard error ``1/√n``.
+    A reconstruction that loses flux on large scales leaves a coherent residual
+    on the shortest frequencies though the total χ² looks fine (the test of
+    MACIM, Ireland et al. 2006). The residuals are (model − data)/σ, so the
+    mean of ``n`` of them has standard error ``1/√n`` if the model is right.
 
     Parameters
     ----------
@@ -2645,7 +2614,18 @@ def short_baseline_residual(model, data, quantile=0.2):
         raise ValueError(reason)
     rows, _ = _observable_blocks(observations)
     r = _residual_vector(model, observations)[rows["vis"]]
-    rho = _visibility_frequencies(observations)
+    rho = []  # spatial frequency B/λ of each visibility row of the residuals
+    for d in observations:
+        b = onp.hypot(
+            onp.ravel(onp.asarray(d.u, float)),
+            onp.ravel(onp.asarray(d.v, float)),
+        )
+        lam = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), b.shape)
+        if d.vis_index is not None:
+            keep = onp.asarray(d.vis_index)
+            b, lam = b[keep], lam[keep]
+        rho.append(b / lam)
+    rho = onp.concatenate(rho)
     n = max(1, int(round(quantile * rho.size)))
     shortest = onp.argsort(rho, kind="stable")[:n]
     return float(onp.mean(r[shortest])), float(1.0 / onp.sqrt(n))
@@ -2654,13 +2634,12 @@ def short_baseline_residual(model, data, quantile=0.2):
 def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
     """The residual dirty map of a model, for any observable.
 
-    The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux
-    at each pixel ``p`` of the grid, where ``g`` is the gradient of χ²
-    and ``J e_p`` the response of the whitened residuals to that flux, as
-    CLEAN uses ([`clean`][virgil.imaging.clean]). For data linear in the
-    image it is the dirty image of the residuals; for closure phases it
-    is the gradient the fit still feels. Positive pixels are where the
-    model needs more flux. Pixels the model cannot respond to are zero.
+    The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux at
+    each pixel ``p`` (``g`` the gradient of χ², ``J e_p`` the response of the
+    whitened residuals), as [`clean`][virgil.imaging.clean] uses. For linear
+    data it is the dirty image of the residuals; for closure phases, the
+    gradient the fit still feels. Positive pixels need more flux; pixels the
+    model cannot respond to are zero.
 
     Parameters
     ----------
@@ -2778,8 +2757,8 @@ def diagnose(model, data, regularizers=()):
     """Check a model and its data for common imaging pitfalls.
 
     Nothing is printed or warned: print the returned
-    [`Diagnosis`][virgil.imaging.Diagnosis] to read it. Run it on the
-    fitted model, with the regularizers used in the fit.
+    [`Diagnosis`][virgil.imaging.Diagnosis]. Run it on the fitted model, with
+    the fit's regularizers.
 
     Parameters
     ----------
@@ -2796,21 +2775,18 @@ def diagnose(model, data, regularizers=()):
     Returns
     -------
     Diagnosis
-        ``checks`` holds, per dataset, ``chi2_red`` (χ² per data point) and
+        ``checks`` holds, per dataset, ``chi2_red`` (χ² per data point),
         ``phase_regime`` (fraction of model visibilities with |arg V| > 0.8π
-        or |V| < 0.05, for projected phases only); per Image,
-        ``pixel_scale_mas``, ``edge_flux``
-        (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
-        (East, North offset in mas); and ``anchored`` (whether something
-        fixes the position), ``flip_dchi2`` (Δχ² when every Image is
-        rotated by 180° about the origin). Also ``chi2_red_by_observable``
-        (per dataset, χ² per datum of each kind of observable; see
-        [`chi2_by_observable`][virgil.imaging.chi2_by_observable]) and
-        ``short_baseline_mean`` (mean whitened visibility residual on the
-        shortest 20% of baselines, or ``None`` for data without
-        baseline-ordered visibilities: ``vis_mat`` operators such as
-        kernel-phase and DISCO data, calibration gains; see
-        [`short_baseline_residual`][virgil.imaging.short_baseline_residual]).
+        or |V| < 0.05, for projected phases only), ``chi2_red_by_observable``
+        (see [`chi2_by_observable`][virgil.imaging.chi2_by_observable]) and
+        ``short_baseline_mean`` (see
+        [`short_baseline_residual`][virgil.imaging.short_baseline_residual];
+        the shortest 20% of baselines, ``None`` for ``vis_mat`` operators such
+        as kernel-phase and DISCO data, or calibration gains); per Image, ``pixel_scale_mas``,
+        ``edge_flux`` (fraction of the flux in the outer 2 pixels) and
+        ``centroid_mas`` (East, North offset); and ``anchored`` (whether
+        something fixes the position) and ``flip_dchi2`` (Δχ² when every Image
+        is rotated by 180° about the origin).
     """
     observations = _as_list(data)
     parts = _parts(model)

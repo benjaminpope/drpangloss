@@ -679,11 +679,6 @@ def length_scale(
         largest of the grid after its one extension (the grid chose its edge).
     extended : str or None, optional
         The side the grid was extended on (``None`` if it was not).
-
-    Notes
-    -----
-    The message quotes the squared-exponential equivalent ℓ/√3 of the Matérn
-    ν = 3/2 length, which matches the curvature at zero lag.
     """
     z = [float(v) for v in evidences]
     if len(z) < 2 or not all(_finite(v) for v in z):
@@ -697,7 +692,8 @@ def length_scale(
         )
     spread = max(z) - min(z)
     best = max(range(len(z)), key=z.__getitem__)
-    # A Matérn length is not a feature width: quote the squared-exponential one.
+    # A Matérn length is not a feature width: quote the squared-exponential
+    # equivalent ℓ/√3 of the ν = 3/2 length (it matches the curvature at zero lag).
     equivalent = float(ells[best]) / math.sqrt(3.0)
     where = (
         f"best ℓ = {float(ells[best]):.3g} mas, a squared-exponential "
@@ -1163,17 +1159,6 @@ def stage_warnings(records):
     )
 
 
-def _classify(message):
-    text = message.lower()
-    if "converge" in text and "optimizer" in text:
-        return "convergence"
-    if "resolve" in text and "peak" in text:
-        return "flux_axis_resolution"
-    if "clipped" in text or "flux_bounds" in text:
-        return "limits_clipped"
-    return None
-
-
 _RULES = {
     "convergence": convergence,
     "flux_axis_resolution": flux_axis_resolution,
@@ -1197,7 +1182,15 @@ def stage_warning_checks(warning_records):
     """
     grouped, other = {}, []
     for record in warning_records:
-        rule = _classify(record["message"])
+        text = record["message"].lower()
+        if "converge" in text and "optimizer" in text:
+            rule = "convergence"
+        elif "resolve" in text and "peak" in text:
+            rule = "flux_axis_resolution"
+        elif "clipped" in text or "flux_bounds" in text:
+            rule = "limits_clipped"
+        else:
+            rule = None
         if rule:
             grouped.setdefault(rule, []).append(record)
         elif not record["category"].endswith(_BENIGN_CATEGORIES):

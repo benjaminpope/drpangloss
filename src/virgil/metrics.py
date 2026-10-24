@@ -265,6 +265,7 @@ _ALIGN_BATCH = 64
 
 
 @jax.jit
+# deliberate: test seam (tests/test_metrics.py)
 def _ncc_table(image, truth, shifts):
     """The NCC of ``image`` shifted by each of ``shifts`` (rows, columns)
     against ``truth``, as a ``(len(shifts),)`` array; compiled once."""
