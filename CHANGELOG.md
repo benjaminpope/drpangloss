@@ -7,8 +7,19 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
+  and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
+  of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's
+  diagonal as `weight * b * (1 - b)`, as the code computes it; no behaviour changes.
+
 ### Added
 
+- CI fails a PR that adds a private function called exactly once in the package
+  (`scripts/code_shape.py --since`, rule 8 in AGENTS.md; exemptions: `# deliberate:`
+  comment, jit kernels, custom derivatives, callbacks, names used in tests). The size
+  comment also prints before/after code-shape metrics (`scripts/code_shape_metrics.py`).
 - The README development-carbon badge is now a shields.io endpoint badge reading
   `generated/dev_carbon_badge.json` on the docs site, so the PyPI README shows
   the current figure, not the one frozen at release. `scripts/dev_carbon.py`
@@ -49,12 +60,18 @@ anything before 1.0 may change between minor versions.
 ### Changed
 
 - The disk, image and quicklook pipeline modules lose a dozen single-use private helpers and a few docstring lines; no behaviour change.
+- `ComplexVisData.term` takes `chi2="auto"|"direct"|"toeplitz"` (default `"auto"`). `fit` then uses the exact Toeplitz (dirty-beam) χ² where it applies: one fixed `Image`, a fixed `alpha`, `offsets=False`, no `antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and at least `toeplitz_min_points` points and `toeplitz_points_per_pixel` per pixel and ddid (`set_ft_defaults`). Otherwise the direct term is used; `"toeplitz"` raises a `ValueError` naming the unmet condition. The beams take about 24 N² bytes of device memory per ddid; auto stays direct above `toeplitz_max_bytes` (4 GB), and `chi2="direct"` opts out. `FitResult.info["likelihood_forms"]` says what ran (and why auto fell back), and a Toeplitz term's `info["chi2"]` is re-evaluated directly at the result. `numpyro_model` and the training fits of `cross_validate` stay direct.
 - `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged.
 - The release checklist no longer requires a mutation-testing kill rate.
 - The Gl 229 period-alias search is no longer a release gate; 0.4.1 was the last release it gated. CI tests guard alias finding, and pull requests that touch `arcs.py`, `pipeline/orbit.py` or their tests now also run the slow orbit tests.
 
 ### Fixed
 
+- `test_fit_reaches_the_direct_optimum` no longer fails on some CI runner CPUs
+  (#528): the fitted `cal.sigma` of two optimiser paths is compared at 1e-6,
+  and the two terms' `sigma` at the same parameters at 1e-12.
+- The `precondition="diag"` example in `docs/conventions.md` is self-contained.
+- `test_the_fitted_log_brightness_is_gauge_fixed_for_every_method` holds `logsumexp` to 1e-9 only in float64, and to a few float32 eps otherwise (one ulp was 2.4e-7).
 - `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
   added to it changes no image, and LM's QR solve drifted along that direction
   by rounding noise (to 4e5 or 3.6e10, depending on platform). The fitted

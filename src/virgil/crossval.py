@@ -167,7 +167,8 @@ def cv_task(
         scale set to 1, for the raw χ²; ``chi2`` is ``None`` without it.
     fit_ft, score_ft : dict, optional
         [`set_ft_defaults`][virgil._geometry.set_ft_defaults] settings in force
-        while fitting and scoring. Keep them the same in every task of a
+        while fitting and scoring (``chi2="auto"`` terms stay direct unless you
+        set ``toeplitz_min_points``). Keep them the same in every task of a
         process: they are read when a function is first traced.
     dtype : {"float64", "float32"}, optional
         Precision of the fit and the scoring.
@@ -186,7 +187,8 @@ def cv_task(
     n = fold.size
     train, test = fold_masks(fold, k)
     options = dict(fit_options or {})
-    with _ft(fit_ft):
+    # deliberate: fits stay direct under chi2="auto" (a precompute per fold)
+    with _ft({"toeplitz_min_points": float("inf"), **(fit_ft or {})}):
         result = fit(
             **fit_kwargs(setting),
             likelihoods=[make_term(train)],

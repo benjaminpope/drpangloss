@@ -41,7 +41,7 @@ jobs:
       # ("Keeping the code small" in AGENTS.md). Never fails the build: a fork's
       # read-only token or an API error just skips it. It runs in this job, not
       # `checks`, because that one executes the PR's code and this one does not
-      # (the code-shape report below runs the base's copy of its script).
+      # (the metrics table below runs the base's copy of its script).
       - name: size comment
         if: github.event_name == 'pull_request'
         continue-on-error: true
@@ -65,22 +65,18 @@ jobs:
           [ "$(echo "$src" | tr -d '*' | awk -F'|' '{ print $5 + 0 }')" -gt 1000 ] && body+="
 
           Net src growth is over +1,000 lines: say in the PR description what it buys and what it supersedes (rule 7 in AGENTS.md)."
-          # Names only, never a failure: single-use private functions of at most
-          # three statements this PR adds (rule 8 in AGENTS.md).
+          # Before/after metrics (single-use private defs, docstring bands).
           # The base's copy of the script runs (it only parses src/), so a PR
-          # cannot run its own code with this job's token.
-          tool="$RUNNER_TEMP/shape"; mkdir -p "$tool/scripts"
-          ln -sfn "$PWD/src" "$tool/src"; ln -sfn "$PWD/.git" "$tool/.git"
+          # cannot run its own code with this job's token; until the base has
+          # the script the table is skipped.
+          tool="$RUNNER_TEMP/metrics"; mkdir -p "$tool/base"
           if git fetch -q --depth=1 origin "$BASE" \
-            && git show "origin/$BASE:scripts/code_shape.py" > "$tool/scripts/code_shape.py" \
-            && shape=$(python3 "$tool/scripts/code_shape.py" --since "origin/$BASE" 2>/dev/null) \
-            && [ "$(echo "$shape" | wc -l)" -gt 1 ]; then
+            && git show "origin/$BASE:scripts/code_shape_metrics.py" > "$tool/metrics.py" \
+            && git archive "origin/$BASE" src/virgil | tar -x -C "$tool/base" \
+            && table=$(python3 "$tool/metrics.py" "$tool/base/src/virgil" src/virgil "$BASE" "this PR" 2>/dev/null); then
             body+="
 
-          \`\`\`
-          $shape
-          \`\`\`
-          Inline these unless each is a jit/vmap boundary, a test seam or a named step."
+          $table"
           fi
           id=$(gh api --paginate "$api/${PR}/comments" --jq '.[] | select(.body | startswith("<!-- size-comment -->")) | .id' | head -n 1)
           if [ -n "$id" ]; then gh api -X PATCH "$api/comments/$id" -f body="$body"; else gh api -X POST "$api/${PR}/comments" -f body="$body"; fi >/dev/null
@@ -91,6 +87,36 @@ jobs:
       # --diff prints the changes ruff would make, so the log shows the fix.
       - name: ruff format --check
         run: uvx ruff@${RUFF_VERSION} format --diff --force-exclude src tests examples scripts
+
+  # The single-use private helper gate (rule 8 in AGENTS.md): fails if the PR
+  # adds a private def that is called once, unless exempt. Read-only token.
+  # Which copy of scripts/code_shape.py decides: the BASE branch's, so a PR
+  # cannot weaken the gate by editing the script. Until the base has the gate
+  # (the PR that introduced it) the PR's own copy runs, which is what
+  # exercises the rule on that PR. This job has no write token or secrets.
+  helper-gate:
+    name: single-use private helpers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BASE: ${{ github.base_ref }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: no new single-use private helpers
+        run: |
+          git fetch -q --depth=1 origin "$BASE"
+          script=scripts/code_shape.py
+          tool="$RUNNER_TEMP/shape"; mkdir -p "$tool/scripts"
+          if git show "origin/$BASE:$script" | grep -q find_single_use; then
+            git show "origin/$BASE:$script" > "$tool/$script"
+            for d in src tests .git; do ln -sfn "$PWD/$d" "$tool/$d"; done
+            script="$tool/$script"
+          fi
+          python3 "$script" --since "origin/$BASE"
 
   # Checks that need virgil importable but no JAX compiles: generated docs in
   # sync with the notebooks, notebook outputs not stale, the package layout.
