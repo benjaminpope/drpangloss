@@ -268,25 +268,25 @@ def _evidence_grid(p, spec, star, draw=None):
 # === STAGES ===
 
 
-def _block_stats(values):
-    values = onp.asarray(values, dtype=float).ravel()
-    good = values[onp.isfinite(values) & (values > 0)]
-    equal = good.size and onp.ptp(good) <= 1e-6 * good.max()
-    return {"all_equal": bool(equal), "n_bad": int(values.size - good.size)}
-
-
 def _load(p):
     from ..imaging import _observable_blocks
 
     data = p.processed
     _, counts = _observable_blocks([data])
-    blocks = {"vis": data.d_vis, "phi": data.d_phi}
+    quoted = {}
+    for key, values in (("vis", data.d_vis), ("phi", data.d_phi)):
+        if onp.size(values):
+            values = onp.asarray(values, dtype=float).ravel()
+            good = values[onp.isfinite(values) & (values > 0)]
+            equal = good.size and onp.ptp(good) <= 1e-6 * good.max()
+            quoted[key] = {
+                "all_equal": bool(equal),
+                "n_bad": int(values.size - good.size),
+            }
     return _load_report(
         p,
         n_by_observable={k: int(v) for k, v in counts.items()},
-        quoted_errors={
-            k: _block_stats(v) for k, v in blocks.items() if onp.size(v)
-        },
+        quoted_errors=quoted,
     )
 
 
@@ -358,7 +358,7 @@ def _edges(grid):
     ]
 
 
-def _hyperparameters(p):
+def _hyperparameters(p):  # deliberate: stage callable
     from ..imaging import chi2_by_observable, error_scale
     from ..models import System
 
@@ -442,20 +442,13 @@ def _member_setup(p):
     return spec, star, draws, variant
 
 
-def _members(p):
+def _members(p):  # deliberate: stage callable
     for k in range(p.settings["members"]):
         p.run_member(k)
     return {"n_members": int(p.settings["members"])}
 
 
-def _edge_flux(member, star):
-    """The fraction of a member's image in the outer two pixels of its grid."""
-    model = member.result.model
-    pixels = onp.asarray((model.env if star else model).brightness)
-    return float(1.0 - pixels[2:-2, 2:-2].sum() / pixels.sum())
-
-
-def _combine(p):
+def _combine(p):  # deliberate: stage callable
     """The mean and sigma images of the kept members, and the diagnostics of
     the mean image."""
     from ..ensemble import GPFit, Group, _chi2, combine
@@ -511,6 +504,18 @@ def _combine(p):
     diagnosis = diagnose(
         scene, data, () if star else (Centroid(ov["pixel_scale_mas"]),)
     )
+    # The widest field's outer pixels hide a smaller member's edge: each kept
+    # member is judged on its own grid, by the fraction of its image in the
+    # outer two pixels.
+    pixels = [
+        onp.asarray(
+            (m.result.model.env if star else m.result.model).brightness
+        )
+        for m in kept
+    ]
+    edge_flux = max(
+        float(1.0 - px[2:-2, 2:-2].sum() / px.sum()) for px in pixels
+    )
     return {
         "chi2": by_observable["chi2"]["total"],
         "chi2_reduced": by_observable["chi2_red"]["total"],
@@ -519,9 +524,7 @@ def _combine(p):
         "short_baseline_mean": sb_mean,
         "short_baseline_error": sb_error,
         "flip_dchi2": float(diagnosis.checks["flip_dchi2"]),
-        # The widest field's outer pixels hide a smaller member's edge: each
-        # kept member is judged on its own grid.
-        "edge_flux": max(_edge_flux(m, star) for m in kept),
+        "edge_flux": edge_flux,
         "chi2_red_mixture": dict(zip((k for k, _ in blocks), ens.chi2_red)),
         "star_fraction": 1.0 - fraction,
         "n_members": len(ens.members),
@@ -531,6 +534,7 @@ def _combine(p):
     }
 
 
+# deliberate: test seam: checks of the stages that ran
 def _run_checks(settings, reports):
     """The checks of the stages that ran, in the order of ``CHECKS``."""
     load, star = reports.get("load"), reports.get("star")
