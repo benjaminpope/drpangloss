@@ -70,6 +70,7 @@ nav:
       - "AMIGO DISCO data": amigo_disco.md
       - "Spectro-interferometric observables": spectro_observables.md
       - "Radio interferometry": radio_interferometry.md
+      - "Radio imaging tutorial": radio_tutorial.md
       - "CLEAN for radio visibilities": radio_clean.md
       - "Cross-validation": cross_validation.md
   - Binaries:
