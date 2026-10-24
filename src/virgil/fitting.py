@@ -622,10 +622,10 @@ class FitResult:
         coordinates of the convergence test (``gtol`` in
         [`fit`][virgil.fitting.fit]); ``stop``, why an unconverged fit ended
         (``None`` if it converged, and for an Adam fit with a finite loss):
-        ``"limit"``, ``"time"``, ``"stalled"`` (an L-BFGS step no longer moved
-        the parameters), ``"non-finite"`` (any method ending on a non-finite
-        loss is unconverged) or ``"failed"`` (another LM failure);
-        ``at_bound``, the parameters and error terms that ended within 1/1000
+        ``"limit"`` (``max_steps``), ``"time"`` (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
+        the parameters), ``"non-finite"`` (a NaN or infinite loss or gradient; any
+        method ending on a non-finite loss is unconverged) or ``"failed"`` (another LM failure);
+        ``at_bound``, a tuple of the parameters and error terms that ended within 1/1000
         of their prior's range of a finite end, in the coordinate they are
         fitted in (a fit at a bound, say an eccentricity at 0.9, is often not
         at a mode); and ``derived``, quantities that likelihood terms compute
@@ -1642,12 +1642,12 @@ def gauss_newton_diag(
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
     ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
-    (1 - b)``: a scale, not the curvature, at weak weights. It is the scale
+    (1 - b)`` (unsmoothed pixels): a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 
-    Source: [Bekas et al. (2007)](../references.md#bekas2007),
-    [Hutchinson (1989)](../references.md#hutchinson1989),
+    Source: probes, [Bekas et al. (2007)](../references.md#bekas2007) and
+    [Hutchinson (1989)](../references.md#hutchinson1989); curvature,
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
     [Cornwell & Evans (1985)](../references.md#cornwellevans1985),
     [Martens (2010)](../references.md#martens2010),

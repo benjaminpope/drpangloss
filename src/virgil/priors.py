@@ -342,6 +342,10 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
     >>> sorted(priors)
     ['cp_scale_log', 'cp_scale_median', 'cp_scale_spread']
     >>> noise = [{"phi_scale": s} for s in scales]
+    >>> values = {"cp_scale_median": 2.0, "cp_scale_spread": 0.5,
+    ...           "cp_scale_log": np.log(np.array([1.0, 2.0, 4.0]))}
+    >>> round(float(scales[1](values)), 6)
+    2.0
     """
     n = int(n)
     if n < 1:

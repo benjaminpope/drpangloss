@@ -731,7 +731,7 @@ def numpyro_model(
         when ``likelihoods`` holds all the data.
     regularizers, noise, likelihoods : optional
         Log-prior terms (e.g. [`Centroid`][virgil.imaging.Centroid]); priors on
-        error and calibration terms (sites ``"noise.<term>"``); extra data terms
+        error and calibration terms (sites ``"noise.<term>"``, ``"noise[i].<term>"`` for a list); extra data terms
         (sites ``"likelihood_<i>"``). See [common arguments](../common_arguments.md).
     flat_coordinates : bool, optional
         Sample each prior in its flat coordinate (default ``False``); pass the

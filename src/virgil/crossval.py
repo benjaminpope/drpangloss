@@ -144,7 +144,8 @@ def cv_task(
         The held-out fold label (a value in ``fold``).
     fold : (N,) int array
         The fold label of every point, e.g. from
-        [`dartboard_folds`][virgil.radio.dartboard_folds].
+        [`dartboard_folds`][virgil.radio.dartboard_folds]; the caller loops over
+        folds and settings.
     fit_kwargs : callable
         ``fit_kwargs(setting)`` returns the mask-independent arguments of
         [`fit`][virgil.fitting.fit] (``model``, ``priors``, ``data=()``,

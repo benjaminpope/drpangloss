@@ -326,7 +326,8 @@ def variational(
     Returns
     -------
     VariationalResult
-        Draws, losses, guide and diagnostics; warns if the loss had not settled.
+        ``samples`` (dict of draws), ``losses``, ``guide``, ``params``,
+        ``converged`` and ``info``; warns if the loss had not settled.
 
     Examples
     --------
