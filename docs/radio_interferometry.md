@@ -312,6 +312,13 @@ slightly optimistic). Fit with
 
 ## Toeplitz χ² {#toeplitz-chi2}
 
+`fit` picks this form itself (`ComplexVisData.term(..., chi2="auto")`) when it
+is exact: one fixed `Image`, `offsets=False`, a fixed `alpha`, no
+`antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and enough points per pixel
+and ddid (`set_ft_defaults`; about 24 N² bytes of device memory per ddid, capped by `toeplitz_max_bytes`; `fit(...).info["likelihood_forms"]` says what ran). Otherwise it stays direct; `chi2="toeplitz"` demands it
+and `chi2="direct"` forbids it. `numpyro_model` and the fits of `cross_validate` are always
+direct. Build it by hand, as below, for fitted offsets.
+
 When the scene is one [`Image`][virgil.models.Image], the χ² of each ddid
 `d` (observation `e`) is a quadratic in the pixels,
 
