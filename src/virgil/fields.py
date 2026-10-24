@@ -80,16 +80,13 @@ def _add_template(eta, mean, mean_floor):
 def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     """Prior variances of a field's cosine coefficients.
 
-    ``S_jk ∝ (κ² + λ_jk)^(-order)``, with ``κ = 1 / length_mas`` and
-    ``λ_jk`` the eigenvalues of the reflecting-boundary (Neumann) Laplacian
-    on the pixel grid, ``(2/h)² [sin²(πj/2n) + sin²(πk/2m)]``. With two
-    lengths ``(ℓ_row, ℓ_col)`` the field is anisotropic,
-    ``S_jk ∝ (1 + ℓ_row² λ_j + ℓ_col² λ_k)^(-order)``: correlated over
-    ``ℓ_row`` along the image's columns (down a column, from row to row) and
-    over ``ℓ_col`` along its rows. One length gives the isotropic case. The constant
-    mode is set to zero, since a softmax image does not depend on it, and
-    the spectrum is scaled so that the field's variance, averaged over
-    pixels, is ``sigma²``.
+    ``S_jk ∝ (κ² + λ_jk)^(-order)``, with ``κ = 1 / length_mas`` and ``λ_jk``
+    the eigenvalues of the reflecting-boundary (Neumann) Laplacian on the pixel
+    grid. With two lengths ``(ℓ_row, ℓ_col)`` the field is anisotropic,
+    ``S_jk ∝ (1 + ℓ_row² λ_j + ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row``
+    down a column and over ``ℓ_col`` along a row. The constant mode is zero (a
+    softmax image does not depend on it) and the spectrum is scaled so the
+    field's pixel-averaged variance is ``sigma²``.
 
     Parameters
     ----------
@@ -146,8 +143,8 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     [`image_priors`][virgil.imaging.image_priors]) it is a Gaussian process of
     standard deviation ``sigma`` and correlation length ``length_mas``;
     ``latent = 0`` gives the floored template. Fix ``sigma`` and ``length_mas``
-    or sample them: their MAP values are biased (``fit`` warns). Derivation:
-    [Gaussian processes and IFT](../gp_and_ift.md).
+    or sample them: their MAP values are biased (``fit`` warns).
+    See [Gaussian processes and IFT](../gp_and_ift.md).
 
     Source: Edenhofer et al. (2024), [references](../references.md#edenhofer2024).
 
@@ -158,16 +155,14 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     sigma : float or array-like, optional
         Standard deviation of the field (default 1).
     length_mas : float or array-like, optional
-        Correlation length in milliarcseconds (default 1), or a pair
-        ``(ℓ_row, ℓ_col)`` along the image's vertical and horizontal axes. With
-        the Image's ``rotation_deg`` set to a structure's position angle,
-        ``(ℓ_along, ℓ_across)`` correlates along and across it (filaments).
+        Correlation length in mas (default 1), or a pair ``(ℓ_row, ℓ_col)``
+        along the image's vertical and horizontal axes (with the Image's
+        ``rotation_deg`` at a structure's position angle: along and across it).
     order : int, optional
         Exponent of the spectrum (default 2).
-    mean : array-like, optional
-        Positive template image, of the same shape (default: flat).
-    mean_floor : float, optional
-        Floor on the template, as a fraction of its peak (default 1e-3).
+    mean, mean_floor : optional
+        Positive template image of the same shape (default flat), and its
+        floor as a fraction of its peak (default 1e-3).
 
     Examples
     --------
@@ -295,23 +290,6 @@ def _azimuthal_filter(latent, angle, nu):
     return np.real(np.fft.ifft(amplitude * np.fft.fft(latent, axis=1), axis=1))
 
 
-def _regular_at_origin(field, nodes, spacing):
-    """Make order ``m`` of a polar field vanish as ``r^|m|`` at the origin.
-
-    A smooth single-valued field has Fourier coefficients ``a_m(r) ~ r^|m|``
-    (Zernike radial polynomials, Born & Wolf 1999 sec. 9.2). Each order is
-    scaled by ``tanh(r / spacing)^|m|``, which is 1 - O(2|m| e^(-2r/spacing)):
-    the prior is stationary away from the centre and only the first few
-    nodes of ``m >= 1`` shrink. Used only when the grid reaches the origin. Only the ``m = 0`` order
-    survives at ``r = 0``.
-    """
-    n_theta = field.shape[1]
-    j = np.arange(n_theta)
-    m = np.minimum(j, n_theta - j)
-    taper = np.tanh(nodes / spacing)[:, None] ** m[None, :]
-    return np.real(np.fft.ifft(taper * np.fft.fft(field, axis=1), axis=1))
-
-
 def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
     """Bilinear interpolation of a polar grid at ``(r, theta)``.
 
@@ -361,13 +339,12 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         May change in any 0.4.x release without a deprecation cycle.
 
     The log-brightness is a Gaussian process on a polar grid in the disk's
-    frame (``n_r`` radii, ``n_theta`` azimuths, deprojected by ``inc`` and
-    ``pa``, centred on ``(dra, ddec)``) with a separable Matérn prior: radial as
+    frame (``n_r`` radii, ``n_theta`` azimuths) with a separable Matérn prior: radial as
     [`RadialGP`][virgil.models.RadialGP], periodic azimuthal as
-    [`MultipoleKernel`][virgil.models.MultipoleKernel]. The latents are
-    whitened standard normals; ``sigma`` is the field's standard deviation. The
-    brightness is the softmax of the field, ``outside`` beyond the grid. Priors:
-    [`multipole_field_priors`][virgil.fields.multipole_field_priors]. Kernel,
+    [`MultipoleKernel`][virgil.models.MultipoleKernel]. The brightness is the
+    softmax of the field, ``outside`` beyond the grid. The latents are whitened
+    standard normals. Priors:
+    [`multipole_field_priors`][virgil.fields.multipole_field_priors]; kernel,
     tied geometry and fallback: [Model notes](models/notes.md#multipolefield).
 
     Parameters
@@ -385,19 +362,17 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Radial (mas; default five node spacings) and azimuthal (radians; 1)
         correlation lengths.
     inc, pa, dra, ddec : float or array-like, optional
-        Disk inclination and major-axis position angle (degrees, North to
-        East), and centre relative to the Image's (mas).
+        Disk inclination, major-axis position angle (degrees, North to East)
+        and centre (mas) relative to the Image's.
     nu, nu_theta : {0.5, 1.5, 2.5, inf}, optional
         Kernel smoothness (default 1.5; ``nu_theta`` defaults to ``nu``).
     geometry_from : str or None, optional
-        Name of a sibling [`System`][virgil.models.System] component (with
-        ``inc``, ``pa``, ``dra``, ``ddec``) whose geometry the field follows
-        (default ``None``: its own).
+        Sibling [`System`][virgil.models.System] component whose ``inc``,
+        ``pa``, ``dra``, ``ddec`` the field follows (default: its own).
     mean, mean_floor : optional
-        Template and floor, as for
-        [`GaussianField`][virgil.fields.GaussianField].
+        As for [`GaussianField`][virgil.fields.GaussianField].
     outside : float, optional
-        Log-brightness beyond the grid (default -20, dark; 0 leaves a flat
+        Log-brightness beyond the grid (default -20; 0 leaves a flat
         background the latents cannot remove).
 
     Examples
@@ -596,7 +571,17 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             factor, azimuthal, precision=jax.lax.Precision.HIGHEST
         )
         if self.r_min_mas == 0:
-            field = _regular_at_origin(field, nodes, self.spacing)
+            # A smooth single-valued field has a_m(r) ~ r^|m| at the origin
+            # (Born & Wolf 1999, sec. 9.2): scale order m by tanh(r/spacing)^|m|,
+            # which is 1 - O(e^(-2r/spacing)), so the prior stays stationary
+            # away from the centre and only m = 0 survives at r = 0.
+            n_theta = field.shape[1]
+            j = np.arange(n_theta)
+            m = np.minimum(j, n_theta - j)
+            taper = np.tanh(nodes / self.spacing)[:, None] ** m[None, :]
+            field = np.real(
+                np.fft.ifft(taper * np.fft.fft(field, axis=1), axis=1)
+            )
         return field
 
     def evaluate(self, pixel_scale_mas):
