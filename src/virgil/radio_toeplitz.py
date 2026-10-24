@@ -437,7 +437,9 @@ class ToeplitzVisData(eqx.Module):
     def direct_term(self, scene, nuisance, **kwargs):
         """[`ComplexVisData.term`][virgil.radio.ComplexVisData.term] of the
         same points, for checks."""
-        return self.data.term(scene, nuisance, mask=self.mask, **kwargs)
+        return self.data.term(
+            scene, nuisance, mask=self.mask, chi2="direct", **kwargs
+        )
 
     def chi2_by_ddid(self, scene, values, nuisance):
         """``(chi2, n)`` per ddid, as
