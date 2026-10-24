@@ -69,6 +69,7 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `radio_clean.clean` diverged on sparse-coverage problems (#551): the minor cycle used a PSF the size of the image, so its window was clipped at half the image and sidelobes beyond it were never subtracted. The minor cycle's PSF is now computed out to `psfpatch` or the far edge of the image from any component, as in CASA; results on well-behaved problems are unchanged (to 1e-9). `clean` also ends a minor cycle at a 10 per cent rise above its running minimum (per scale; `history[i]["minor_stop"]` records why) and the run with `stop="diverged"` at a relative rise above 3.0 of the whole-image peak residual over the previous major cycle or the minimum so far, as CASA's iteration control does.
 - `test_fit_reaches_the_direct_optimum` no longer fails on some CI runner CPUs
   (#528): the fitted `cal.sigma` of two optimiser paths is compared at 1e-6,
   and the two terms' `sigma` at the same parameters at 1e-12.
