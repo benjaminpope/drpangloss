@@ -169,7 +169,7 @@ To preview it on a local server, run:
 
 ## Contributing the Changes
 
-After these steps have been completed, you can commit your changes and push them to your forked repository. These changes should have its formatting and linting checked by the pre-commit hooks. If there are any issues, you will need to fix them before you can commit your changes. Once you have pushed your changes to your forked repository, you can submit a pull request to the main repository. This will allow the maintainers to review your changes and merge them into the main repository!
+After these steps have been completed, you can commit your changes and push them to your forked repository. These changes should have its formatting and linting checked by the pre-commit hooks. If there are any issues, you will need to fix them before you can commit your changes. Do not edit `CHANGELOG.md`: describe a user-visible change in a fragment file in `changelog.d/` (see its README), so parallel pull requests never conflict. Once you have pushed your changes to your forked repository, you can submit a pull request to the main repository. This will allow the maintainers to review your changes and merge them into the main repository!
 
 ---
 
@@ -187,7 +187,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
 2. On GitHub, under *Settings → Environments*, create the environment `pypi`. Adding yourself as a required reviewer makes every upload wait for your approval.
 
 **Each release** (a short list; every item must hold for the commit you tag):
-1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the CHANGELOG heading is dated (`## X.Y.Z (YYYY-MM-DD)`, not `Unreleased`). Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
+1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the release PR (head branch `release*`, the only kind CI lets edit `CHANGELOG.md`) collects the fragments with `towncrier build --yes --version X.Y.Z`, which writes the dated `## X.Y.Z (YYYY-MM-DD)` section and deletes the fragments. Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
 2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
    ```bash
    gh workflow run tests.yml --ref main
