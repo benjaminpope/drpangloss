@@ -131,22 +131,6 @@ _DAY_S = 86400.0  # s
 _KEPLER_FACTOR = 4 * math.pi**2 * _AU_M**3 / (_GM_SUN * _DAY_S**2)
 
 
-def _wrap_node(omega, Omega):
-    """Move (omega, Omega) (degrees) to the twin with ``0 <= Omega < 180``.
-
-    The sky orbit is unchanged by shifting both by 180°. ``omega`` ends in
-    [0, 360).
-    """
-    shift = np.floor(Omega / 180.0) * 180.0
-    Omega = Omega - shift
-    omega = omega - shift
-    again = Omega >= 180.0  # Omega = -tiny: 180 - tiny rounds to 180
-    Omega = np.where(again, Omega - 180.0, Omega)
-    omega = np.where(again, omega - 180.0, omega)
-    omega = np.mod(omega, 360.0)
-    return np.where(omega >= 360.0, 0.0, omega), Omega
-
-
 def _unit_orbit(dt, period, dt_peri, ecc):
     """Thiele–Innes ``X = cos E - e`` and ``Y = √(1 - e²) sin E``.
 
@@ -170,26 +154,18 @@ class KeplerOrbit(zdx.Base):
 
     Parameters
     ----------
-    period : float
-        Orbital period (days).
-    dt_peri : float
-        Time of periastron minus ``t_ref`` (days).
+    period, dt_peri : float
+        Orbital period (days) and time of periastron minus ``t_ref`` (days).
     ecc : float
         Eccentricity, ``0 <= ecc < 1``.
-    inc : float
-        Inclination (degrees, ``0 <= inc < 180``; below 90 the position
-        angle increases with time).
-    omega : float
-        The secondary's argument of periastron (degrees), measured from the
-        ascending node in the direction of motion.
-    Omega : float
-        Position angle of the ascending node, where the secondary recedes
-        (degrees, North through East).
+    inc, omega, Omega : float
+        Inclination (``0 <= inc < 180``; below 90 the position angle
+        increases with time), argument of periastron and position angle of
+        the ascending node, in degrees ([conventions](../conventions.md#orbits)).
     a_mas : float
-        Angular semimajor axis of the relative orbit (mas).
+        Angular semimajor axis (mas).
     t_ref : float, optional
-        Reference time (MJD, float64, static). Times are measured from it,
-        so that float32 keeps them precise.
+        Reference time (MJD, float64, static).
 
     Notes
     -----
@@ -297,7 +273,15 @@ class KeplerOrbit(zdx.Base):
                 "(the position angle takes only two values); use dt_peri "
                 "or StateVectorOrbit for edge-on orbits."
             )
-        mean = _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega)
+        f = _true_anomaly_at_ref(theta, inc, omega, Omega)
+        ecc_ = np.asarray(ecc, float)
+        ecc_anomaly = np.arctan2(
+            np.sqrt(1.0 - ecc_**2) * np.sin(f), ecc_ + np.cos(f)
+        )
+        mean = ecc_anomaly - ecc_ * np.sin(ecc_anomaly)
+        # E from atan2 is in (-π, π], so M is too: only M = π needs moving.
+        # (Shifting by π before a modulo would round small M to zero in float32.)
+        mean = np.where(mean >= np.pi, mean - 2.0 * np.pi, mean)
         dt_peri = -mean * np.asarray(period, float) / (2.0 * np.pi)
         return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
 
@@ -352,7 +336,7 @@ class KeplerOrbit(zdx.Base):
         dt = _days_since(mjd, self.t_ref)
         return tuple(_velocity(self._relative, dt))
 
-    def _frame(self, dt):
+    def _frame(self, dt):  # deliberate: also called by models.py
         dra, ddec, dz = self._relative(dt)
         line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
@@ -457,7 +441,16 @@ def _thiele_innes_angles(a, b, f, g):
     difference = np.arctan2(-(b + f), a - g)  # omega - Omega
     omega = np.rad2deg((total + difference) / 2)
     Omega = np.rad2deg((total - difference) / 2)
-    omega, Omega = _wrap_node(omega, Omega)
+    # Move to the twin with 0 <= Omega < 180 (shifting both by 180° leaves
+    # the sky orbit unchanged); omega ends in [0, 360).
+    shift = np.floor(Omega / 180.0) * 180.0
+    Omega = Omega - shift
+    omega = omega - shift
+    again = Omega >= 180.0  # Omega = -tiny: 180 - tiny rounds to 180
+    Omega = np.where(again, Omega - 180.0, Omega)
+    omega = np.where(again, omega - 180.0, omega)
+    omega = np.mod(omega, 360.0)
+    omega = np.where(omega >= 360.0, 0.0, omega)
     # The singular values of [[A, B], [F, G]] are a and a |cos i|, and
     # in terms of p = |(A - G, B + F)|, q = |(A + G, B - F)| they are
     # (q ± p) / 2 (p, q are differences of norms that cannot cancel).
@@ -687,7 +680,9 @@ class PositionData(zdx.Base):
 
 
 @jax.jit
-def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
+def _thiele_innes_fit(  # deliberate: jit boundary vmapped by _fit_batch
+    dt, dra, ddec, whitener, period, dt_peri, ecc
+):
     """Weighted least-squares ``(A, B, F, G)`` and χ² at one grid point."""
     x, y = _unit_orbit(dt, period, dt_peri, ecc)
     zero = np.zeros_like(x)
@@ -711,7 +706,9 @@ _N_SIGN_PAIRS = 16  # epoch pairs tried per grid point by the sign-free fit
 
 
 @jax.jit
-def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
+def _thiele_innes_fit_sign_free(  # deliberate: jit/vmap boundary, 59 lines
+    dt, dra, ddec, whitener, period, dt_peri, ecc
+):
     """Thiele–Innes fit when each position is known only up to a sign.
 
     For each of the best-conditioned pairs of epochs and both relative signs,
@@ -777,29 +774,24 @@ _PHASE_COHERENCE = 9.0
 
 
 def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
-    """Trial periods that stay in phase across the observations.
+    """Trial periods, uniform in 1/P, that stay in phase over the observations.
 
-    The grid is uniform in frequency 1/P with a step of 1/(kT) for a baseline
-    T, so that the best trial period stays within a fraction of a cycle of the
-    truth at every epoch; see [period grids](../orbit_methods.md#period-grid).
+    See [period grids](../orbit_methods.md#period-grid).
 
     Parameters
     ----------
     times : array-like
-        The times (days, e.g. MJD) of the epochs that seed the orbits;
-        their range is the baseline T.
+        Epoch times (days); their range is the baseline T.
     p_min, p_max : float
-        The shortest and longest trial periods (days), e.g. from the
-        period prior.
+        The shortest and longest trial periods (days).
     k : float, optional
-        Neighbouring trial periods drift apart by at most ``1/k`` of a
-        cycle over the baseline (default 9).
+        Neighbouring periods drift apart by at most ``1/k`` of a cycle over
+        T (default 9).
 
     Returns
     -------
     numpy.ndarray
-        The periods (days), increasing from ``p_min`` to ``p_max``, for
-        [`starting_orbits`][virgil.orbits.starting_orbits].
+        Periods (days), increasing from ``p_min`` to ``p_max``.
 
     Raises
     ------
@@ -821,7 +813,7 @@ def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
     return 1.0 / onp.linspace(1.0 / p_min, 1.0 / p_max, max(n, 2))
 
 
-def _phase_drift(periods, baseline):
+def _phase_drift(periods, baseline):  # deliberate: imported by epochs.py
     """The largest phase drift (cycles) between neighbouring trial periods
     over ``baseline`` days: ``T |1/P_i - 1/P_(i+1)|``; 0 for one period."""
     frequencies = onp.sort(1.0 / onp.asarray(periods, float).ravel())
@@ -831,20 +823,13 @@ def _phase_drift(periods, baseline):
 
 
 @functools.partial(jax.jit, static_argnums=0)
-def _fit_batch(fitter, dt, dra, ddec, whitener, period, dt_peri, ecc):
+def _fit_batch(  # deliberate: jit boundary, fitter static
+    fitter, dt, dra, ddec, whitener, period, dt_peri, ecc
+):
     """``fitter`` at a batch of grid points (positions traced)."""
     return jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))(
         dt, dra, ddec, whitener, period, dt_peri, ecc
     )
-
-
-def _position_batch(batch_size, positions):
-    """Grid points per ``lax.map`` batch: about ``batch_visibilities()``
-    position-epochs in all, and at least ``MIN_BATCH_SIZE`` points."""
-    if batch_size is not None:
-        return batch_size_or_default(batch_size, None)
-    n = max(int(onp.size(positions.dt)), 1)
-    return max(MIN_BATCH_SIZE, batch_visibilities() // n)
 
 
 def starting_orbits(
@@ -858,41 +843,31 @@ def starting_orbits(
 ):
     """Good starting orbits for a set of positions, from a grid search.
 
-    At fixed period, eccentricity and time of periastron the positions are
-    linear in the Thiele–Innes constants, so each grid point is an exact
-    weighted least-squares solve; see
-    [starting orbits](../orbit_methods.md#starting-orbits). Refine the best
-    orbits with a fit to the visibilities or to the positions.
+    Each grid point is an exact weighted least-squares solve; see
+    [starting orbits](../orbit_methods.md#starting-orbits).
 
     Parameters
     ----------
     positions : PositionData
         The measured positions.
     periods : array-like
-        Trial periods (days), dense enough to stay in phase across the
-        positions' time baseline: see
-        [`period_grid`][virgil.orbits.period_grid].
+        Trial periods (days); see [`period_grid`][virgil.orbits.period_grid].
     eccs : array-like, optional
-        Trial eccentricities; by default 0 to 0.9 in steps of 0.05.
-    n_phase : int, optional
-        Number of trial times of periastron, spread over each period.
-    n_best : int, optional
-        Number of orbits to return.
+        Trial eccentricities (default 0 to 0.9 in steps of 0.05).
+    n_phase, n_best : int, optional
+        Trial times of periastron per period; orbits returned.
     sign_free : bool, optional
-        Treat each position as known only up to a sign, as for a binary of
-        nearly equal fluxes (the signs are chosen per grid point; see the
-        page above). The orbit returned has the global sign of its best fit,
-        and its reflection (``omega`` + 180°) fits equally well.
+        Positions known only up to a sign (nearly equal fluxes); the orbit
+        returned has the global sign of its best fit, and its reflection
+        (``omega`` + 180°) fits equally well.
     batch_size : int, optional
-        Grid points solved together (default: from the number of positions);
-        bounds the memory, not the result. Capped at the grid size (rounded
-        up to a power of two), even when given explicitly.
+        Grid points solved together; bounds memory, not the result. Capped
+        at the grid size (rounded up to a power of two) even when given.
 
     Returns
     -------
     list of (KeplerOrbit, float)
-        The best orbits and their χ², best first. Each has
-        ``0 <= Omega < 180``; (Omega + 180, omega + 180) fits equally well.
+        The best orbits and χ², best first, each with ``0 <= Omega < 180``.
     """
     eccs = onp.arange(0.0, 0.91, 0.05) if eccs is None else onp.asarray(eccs)
     phases = onp.arange(n_phase) / n_phase
@@ -903,9 +878,12 @@ def starting_orbits(
     n_grid = len(grid)
     # Never pad past the grid itself (a power of two, to share compiles):
     # the memory bound is for grids too large to solve at once.
-    size = min(
-        _position_batch(batch_size, positions), 1 << (n_grid - 1).bit_length()
-    )
+    if batch_size is None:  # about batch_visibilities() position-epochs in all
+        n = max(int(onp.size(positions.dt)), 1)
+        batch = max(MIN_BATCH_SIZE, batch_visibilities() // n)
+    else:
+        batch = batch_size_or_default(batch_size, None)
+    size = min(batch, 1 << (n_grid - 1).bit_length())
     # Fixed-size batches, the last padded: grids share a compile per number
     # of positions and power-of-two size (up to the batch), and memory is
     # bounded by ``size``.
@@ -938,7 +916,9 @@ def starting_orbits(
 
 
 @jax.jit  # one dispatch per eager call, as for ``_thiele_innes_angles``
-def _state_elements(dra, ddec, dz, vra, vdec, vz, mu):
+def _state_elements(  # deliberate: jit boundary
+    dra, ddec, dz, vra, vdec, vz, mu
+):
     """``(period, dt_peri, ecc, inc, omega, Omega, a_mas)`` of a state vector."""
     r = np.stack([dra, ddec, dz])  # (East, North, away)
     v = np.stack([vra, vdec, vz])
@@ -996,31 +976,27 @@ def _state_elements(dra, ddec, dz, vra, vdec, vz, mu):
 class StateVectorOrbit(zdx.Base):
     """An orbit given by the relative position and velocity at ``t_ref``.
 
-    For short arcs, where the measured quantities (the position and its
-    rate of change) are well determined but the Keplerian elements are not:
-    sampling these instead of the elements avoids long curved degeneracies.
-    The line-of-sight position and velocity, and the gravitational
-    parameter, carry the physical priors.
+    For short arcs, where the Keplerian elements are poorly determined.
 
     Parameters
     ----------
     dra, ddec : float
-        Position of the secondary from the primary at ``t_ref`` (mas).
+        Position of the secondary at ``t_ref`` (mas).
     vra, vdec : float
         Its velocity at ``t_ref`` (mas/yr).
     dz, vz : float
         Line-of-sight position (mas) and velocity (mas/yr), positive away
-        from the observer.
+        from the observer; they and ``mu`` carry the physical priors.
     mu : float
-        Gravitational parameter in angular units, ``4π² a_mas³ / P²`` with
-        P in years (mas³/yr²). It is free of distance.
+        Gravitational parameter ``4π² a_mas³ / P²`` (mas³/yr², P in years);
+        free of distance.
     t_ref : float, optional
         The epoch of the state (MJD, static float64).
 
     Notes
     -----
-    Use [`to_kepler`][virgil.orbits.StateVectorOrbit.to_kepler] for the
-    elements. Only bound states (negative energy) are orbits.
+    Only bound states (negative energy) are orbits; see
+    [`to_kepler`][virgil.orbits.StateVectorOrbit.to_kepler].
     """
 
     dra: jax.Array
@@ -1041,11 +1017,6 @@ class StateVectorOrbit(zdx.Base):
         self.vz = np.asarray(vz, dtype=float)
         self.mu = np.asarray(mu, dtype=float)
         self.t_ref = float(t_ref)
-
-    def _energy(self):
-        r = np.sqrt(self.dra**2 + self.ddec**2 + self.dz**2)
-        v2 = self.vra**2 + self.vdec**2 + self.vz**2
-        return v2 / 2 - self.mu / r
 
     def __check_init__(self):
         _check(
@@ -1069,7 +1040,9 @@ class StateVectorOrbit(zdx.Base):
                 "primary (no angular momentum), a radial fall with no orbital "
                 "plane."
             )
-        energy = concrete(self._energy())
+        r_len = np.sqrt(self.dra**2 + self.ddec**2 + self.dz**2)
+        v2 = self.vra**2 + self.vdec**2 + self.vz**2
+        energy = concrete(v2 / 2 - self.mu / r_len)
         if energy is not None and not onp.all(energy < 0):
             raise ValueError(
                 "StateVectorOrbit: the state is unbound (non-negative "
@@ -1224,37 +1197,14 @@ class RVData(zdx.Base):
 
     # -- analytic marginalization of the instrument zero points ----------
 
-    def _prior(self, prior):
-        """``(mean, sd)`` arrays of length ``len(self.instruments)``."""
-        k = len(self.instruments)
-        if prior is True:
-            raise ValueError(
-                "marginalize_offsets=True is not supported: state the "
-                "zero-point prior explicitly as (mean, sd) in km/s (scalars "
-                "or one per instrument), e.g. marginalize_offsets=(0.0, 50.0)."
-            )
-        mean, sd = prior
-        mean = onp.broadcast_to(onp.asarray(mean, dtype=float), (k,))
-        sd = onp.broadcast_to(onp.asarray(sd, dtype=float), (k,))
-        if not onp.all(onp.isfinite(sd) & (sd > 0)):
-            raise ValueError(
-                "the zero-point prior needs a positive, finite sd: an "
-                "infinite (flat) prior is not supported."
-            )
-        if not onp.all(onp.isfinite(mean)):
-            raise ValueError("the zero-point prior needs a finite mean.")
-        return np.asarray(mean), np.asarray(sd)
-
-    def _design(self):
-        k = len(self.instruments)
-        return (self.inst[:, None] == np.arange(k)[None, :]).astype(
-            self.rv.dtype
-        )
-
     def _marginal(self, prior):
         """The zero points as a [`LinearMarginal`][virgil._linear.LinearMarginal]."""
         mean, sd = prior
-        return LinearMarginal(self._design(), mean, prior_sd=sd)
+        k = len(self.instruments)
+        design = (self.inst[:, None] == np.arange(k)[None, :]).astype(
+            self.rv.dtype
+        )
+        return LinearMarginal(design, mean, prior_sd=sd)
 
     def marginal_whitened_residuals(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
@@ -1334,7 +1284,25 @@ class RVData(zdx.Base):
             ``True`` is an error: the prior must be stated.
         """
         if marginalize_offsets not in (None, False):
-            marginalize_offsets = self._prior(marginalize_offsets)
+            if marginalize_offsets is True:
+                raise ValueError(
+                    "marginalize_offsets=True is not supported: state the "
+                    "zero-point prior explicitly as (mean, sd) in km/s "
+                    "(scalars or one per instrument), e.g. "
+                    "marginalize_offsets=(0.0, 50.0)."
+                )
+            k = len(self.instruments)
+            mean, sd = marginalize_offsets
+            mean = onp.broadcast_to(onp.asarray(mean, dtype=float), (k,))
+            sd = onp.broadcast_to(onp.asarray(sd, dtype=float), (k,))
+            if not onp.all(onp.isfinite(sd) & (sd > 0)):
+                raise ValueError(
+                    "the zero-point prior needs a positive, finite sd: an "
+                    "infinite (flat) prior is not supported."
+                )
+            if not onp.all(onp.isfinite(mean)):
+                raise ValueError("the zero-point prior needs a finite mean.")
+            marginalize_offsets = np.asarray(mean), np.asarray(sd)
         else:
             marginalize_offsets = None
         return _Term(self, params, jitter, marginalize_offsets)
@@ -1397,11 +1365,10 @@ def orientation_priors(
     """Angle-vector priors for an orbit's node and periastron.
 
     With ``positions_only`` the keys are ``"two_Omega"`` (2Ω) and ``"varpi"``
-    (ϖ = Ω + ω), which merge the twin modes (Ω, ω) and (Ω + 180°, ω + 180°)
-    of a positions-only fit; otherwise ``"Omega"`` and ``"varpi"``.
-    Build the orbit with
-    [`KeplerOrbit.from_varpi`][virgil.orbits.KeplerOrbit.from_varpi].
-    See [orientation priors](../orbit_methods.md#orientation-priors).
+    (ϖ = Ω + ω), merging the twin modes of a positions-only fit; otherwise
+    ``"Omega"`` and ``"varpi"``. Build the orbit with
+    [`KeplerOrbit.from_varpi`][virgil.orbits.KeplerOrbit.from_varpi]; see
+    [orientation priors](../orbit_methods.md#orientation-priors).
 
     Parameters
     ----------
@@ -1412,23 +1379,11 @@ def orientation_priors(
     ring_width : float, optional
         Passed to [`AngleVector`][virgil.angles.AngleVector].
     inclination : bool, optional
-        Also return ``IsotropicInclination()`` under ``prefix + "inc"``
-        (default ``False``).
+        Also return ``IsotropicInclination()`` under ``prefix + "inc"``.
 
     Returns
     -------
     dict
-        Priors keyed ``prefix + "two_Omega"`` (or ``"Omega"``),
-        ``prefix + "varpi"`` and, if ``inclination``, ``prefix + "inc"``.
-
-    Examples
-    --------
-    >>> priors = {**orientation_priors(), "ecc": dist.Uniform(0.0, 0.9)}
-    >>> def orbit_fn(v):
-    ...     return KeplerOrbit.from_varpi(
-    ...         400.0, 30.0, v["ecc"], 60.0, v["varpi"], 20.0,
-    ...         two_Omega=v["two_Omega"], t_ref=60500.0,
-    ...     )
     """
     node = "two_Omega" if positions_only else "Omega"
     priors = {
@@ -1461,19 +1416,6 @@ def _true_anomaly_at_ref(theta, inc, omega, Omega):
     phi = np.deg2rad(theta - Omega)
     u = np.arctan2(np.sin(phi) / np.cos(np.deg2rad(inc)), np.cos(phi))
     return u - np.deg2rad(omega)
-
-
-def _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega):
-    """M in [-π, π) at the epoch where the position angle is ``theta``."""
-    f = _true_anomaly_at_ref(theta, inc, omega, Omega)
-    ecc = np.asarray(ecc, float)
-    ecc_anomaly = np.arctan2(
-        np.sqrt(1.0 - ecc**2) * np.sin(f), ecc + np.cos(f)
-    )
-    mean = ecc_anomaly - ecc * np.sin(ecc_anomaly)
-    # E from atan2 is in (-π, π], so M is too: only M = π needs moving.
-    # (Shifting by π before a modulo would round small M to zero in float32.)
-    return np.where(mean >= np.pi, mean - 2.0 * np.pi, mean)
 
 
 def position_angle_log_jacobian(theta, ecc, inc, omega, Omega):
