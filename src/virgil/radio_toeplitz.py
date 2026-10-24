@@ -81,46 +81,6 @@ def _signature(nuisance):
     )
 
 
-def _shift_bound_pix(nuisance, max_offset_mas, rotation_deg, pixel_scale):
-    """Largest image-frame shift (pixels) of the offsets' prior box."""
-    if max_offset_mas is None:
-        free = onp.arange(nuisance.n_obs) != nuisance.ref_obs
-        theta = nuisance.offset_beams * 2.0 * onp.pi
-        max_offset_mas = float(onp.max(theta * nuisance.offset_unit_mas[free]))
-    angle = onp.deg2rad(rotation_deg)
-    spread = abs(onp.cos(angle)) + abs(onp.sin(angle))
-    return float(max_offset_mas) * spread / pixel_scale
-
-
-def _plan(group, n_groups, chunk_size):
-    """Points sorted by group into chunks that never straddle a group.
-
-    Returns ``(idx, valid, chunk_group, last)``: the point index and
-    validity of each chunk slot, and each chunk's group and whether it ends
-    that group.
-    """
-    order = onp.argsort(group, kind="stable")
-    counts = onp.bincount(group, minlength=n_groups)
-    chunk = max(1, min(int(chunk_size), int(counts.max())))
-    idx, valid, chunk_group, last = [], [], [], []
-    start = 0
-    for g, count in enumerate(counts):
-        members = order[start : start + count]
-        start += count
-        n_chunks = -(-int(count) // chunk)
-        pad = n_chunks * chunk - count
-        idx.append(onp.concatenate([members, onp.zeros(pad, int)]))
-        valid.append(onp.arange(n_chunks * chunk) < count)
-        chunk_group += [g] * n_chunks
-        last += [False] * (n_chunks - 1) + [True] * min(n_chunks, 1)
-    return (
-        onp.concatenate(idx).reshape(-1, chunk),
-        onp.concatenate(valid).reshape(-1, chunk),
-        onp.asarray(chunk_group, dtype=onp.int32),
-        onp.asarray(last, dtype=bool),
-    )
-
-
 def _accumulate(xs, nf, kp, finalize, out):
     """Spread chunks into one grid per group; ``finalize`` each group's grid
     into ``out[group]`` at its last chunk."""
@@ -293,11 +253,19 @@ class ToeplitzVisData(eqx.Module):
             raise ValueError("the mask leaves no points.")
         kp = grid.kernel(eps)
         npix, pix = int(nrow), image.pixel_scale_mas
-        bound = (
-            _shift_bound_pix(nuisance, max_offset_mas, image.rotation_deg, pix)
-            if free
-            else 0.0
-        )
+        bound = 0.0
+        if free:
+            # The largest image-frame shift (pixels) of the offsets' prior box.
+            shift_mas = max_offset_mas
+            if shift_mas is None:
+                free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
+                theta = nuisance.offset_beams * 2.0 * onp.pi
+                shift_mas = float(
+                    onp.max(theta * nuisance.offset_unit_mas[free_obs])
+                )
+            angle = onp.deg2rad(image.rotation_deg)
+            spread = abs(onp.cos(angle)) + abs(onp.sin(angle))
+            bound = float(shift_mas) * spread / pix
 
         used = onp.flatnonzero(mask)
         u = onp.asarray(data.u, onp.float64)[used]
@@ -318,7 +286,25 @@ class ToeplitzVisData(eqx.Module):
 
         n_groups = len(data.ddid_ids)
         group = onp.asarray(data.ddid, onp.int64)[used]
-        idx, valid, chunk_group, last = _plan(group, n_groups, chunk_size)
+        # Points sorted by group into chunks that never straddle a group.
+        order = onp.argsort(group, kind="stable")
+        counts = onp.bincount(group, minlength=n_groups)
+        chunk = max(1, min(int(chunk_size), int(counts.max())))
+        idx_l, valid_l, group_l, last_l = [], [], [], []
+        start = 0
+        for g, count in enumerate(counts):
+            members = order[start : start + count]
+            start += count
+            n_chunks = -(-int(count) // chunk)
+            pad = n_chunks * chunk - count
+            idx_l.append(onp.concatenate([members, onp.zeros(pad, int)]))
+            valid_l.append(onp.arange(n_chunks * chunk) < count)
+            group_l += [g] * n_chunks
+            last_l += [False] * (n_chunks - 1) + [True] * min(n_chunks, 1)
+        idx = onp.concatenate(idx_l).reshape(-1, chunk)
+        valid = onp.concatenate(valid_l).reshape(-1, chunk)
+        chunk_group = onp.asarray(group_l, dtype=onp.int32)
+        last = onp.asarray(last_l, dtype=bool)
         nf_b = grid.grid_size(2 * npix, kp)
         nf_d = grid.grid_size(npix + 2 * math.ceil(bound), kp)
         margin = grid.margin(nf_d, kp) if free else None
@@ -559,16 +545,6 @@ class _ToeplitzTerm(eqx.Module):
     def _profiled(self):
         return self.nuisance.sigmas == "profile" and self.sigma_fixed is None
 
-    def _check_float64(self):
-        grid.check_float64()
-        leaves = jax.tree.leaves((self.arrays, self.sigma_fixed))
-        if any(x.dtype not in (np.float64, np.complex128) for x in leaves):
-            raise ValueError(
-                "The Toeplitz term needs float64 throughout (its constant "
-                "Σw|V|² cancels to small differences); fit with "
-                "dtype='float64'."
-            )
-
     # -- pieces ---------------------------------------------------------
 
     def _image(self, values):
@@ -655,7 +631,14 @@ class _ToeplitzTerm(eqx.Module):
         or ``None``), ``G`` per ddid and σ, of which the loss is a function
         (``fit``'s ``precondition="diag"`` takes its Gauss–Newton curvature
         through them)."""
-        self._check_float64()
+        grid.check_float64()
+        leaves = jax.tree.leaves((self.arrays, self.sigma_fixed))
+        if any(x.dtype not in (np.float64, np.complex128) for x in leaves):
+            raise ValueError(
+                "The Toeplitz term needs float64 throughout (its constant "
+                "Σw|V|² cancels to small differences); fit with "
+                "dtype='float64'."
+            )
         flux, gain, offset, sigma, _ = self.nuisance._unpack(values)
         image = self._image(values)
         g = (flux * gain)[onp.asarray(self.ddid_obs)]
@@ -666,13 +649,6 @@ class _ToeplitzTerm(eqx.Module):
         image, shift, g, _ = params
         x = self._cross(image, shift)
         return g * (g * self._quadratic(image) - 2.0 * x)
-
-    def _weighted(self, params, sigma):
-        """``Σ_d Δ_d / s_d²``, through one map per observation."""
-        image, shift, g, _ = params
-        c = 1.0 / sigma**2
-        q = np.sum(c * g**2 * self._quadratic(image))
-        return q - 2.0 * self._cross(image, shift, c * g)
 
     def _profile(self, delta):
         """``ŝ_d² = (C_d + Δ_d) / 2N_d`` (1 without points), held."""
@@ -695,7 +671,10 @@ class _ToeplitzTerm(eqx.Module):
             )
             return np.sum(r - jax.lax.stop_gradient(r)), log_norm
         sigma = params[3] if self.sigma_fixed is None else self.sigma_fixed
-        reduced = self._weighted(params, sigma)
+        image, shift, g, _ = params
+        c = 1.0 / sigma**2
+        q = np.sum(c * g**2 * self._quadratic(image))
+        reduced = q - 2.0 * self._cross(image, shift, c * g)
         if self.nuisance.sigmas is True:
             chi2 = np.sum(c_sum / sigma**2) + reduced
             return chi2, 2.0 * np.sum(count * np.log(sigma))

@@ -541,3 +541,5 @@ Risks, roughly by importance:
    follow-up (section 5) to benefit.
 8. Float32 and CPU: the term is f64-only; on CPU the FFT cost at 2056² (~30 ms) still gives a ~10×
    improvement, not 50×.
+
+*Note (0.4.2): `_residuals_and_sigma`, `_type1` and `_uv_taper` cited above were inlined into their one caller each (virgil#535); line numbers are from before.*
