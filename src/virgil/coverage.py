@@ -93,12 +93,11 @@ def ami_grid_record(
 ):
     """A simulated AMI record in AMIGO's form: a uv grid and a mode basis.
 
-    A simplified form of AMIGO's latent visibility basis (Desdoigts et al.
-    2025, arXiv:2510.09806): complex visibilities on the half-plane of a
-    square uv grid, a cell with mask transfer ``m`` having log-amplitude and
-    phase error ``sigma / m``. Flux and position responses are projected out
-    and an SVD gives orthonormal modes, kept until a fraction ``keep`` of the
-    precision is retained. The coefficients are zero: fill them with
+    Source: Desdoigts et al. (2025), arXiv:2510.09806, simplified: visibilities
+    on the half-plane of a square uv grid; a cell of mask transfer ``m`` has
+    log-amplitude and phase error ``sigma / m``. SVD modes (flux and position
+    projected out) are kept to a fraction ``keep`` of the precision. The
+    coefficients are zero: fill them with
     [`OIData.with_model`][virgil.oidata.OIData.with_model].
 
     Parameters
@@ -171,10 +170,10 @@ def nrm_oidata(
 ):
     """A simulated non-redundant masking observation: V² and closure phases.
 
-    The classical reduction of aperture masking (as in AMICAL), with one
-    squared visibility at the centre of each splodge, that is at each
-    baseline between two holes, and the closure phases of every triangle of
-    holes. For the 7-hole NIRISS mask that is 21 V² and 35 closure phases.
+    One squared visibility at the centre of each splodge, that is at each
+    baseline between two holes (as in AMICAL), and the closure phases of every
+    triangle: 21 V² and 35 closure phases for the
+    7-hole NIRISS mask.
 
     Parameters
     ----------
@@ -192,11 +191,9 @@ def nrm_oidata(
     Returns
     -------
     OIData
-        Data with zero values, for
-        [`with_model`][virgil.oidata.OIData.with_model]. Each baseline
-        carries its pair of holes (numbered from 1, in the order of
-        ``holes``) as its station indices, so the data can be written to
-        OIFITS.
+        Zero-valued data, for [`with_model`][virgil.oidata.OIData.with_model].
+        Each baseline carries its hole pair (numbered from 1, in the order of
+        ``holes``) as station indices, so the data can be written to OIFITS.
     """
     holes = onp.asarray(holes, float)
     pairs, baselines = _baselines(holes)
@@ -247,10 +244,10 @@ def vlti_oidata(
 ):
     """A simulated long-baseline observation: V² and closure phases.
 
-    Every pair of telescopes is observed at each hour angle, in every
-    wavelength channel, with closure phases from every triangle. The defaults
-    resemble VLTI/MATISSE in the L band with the four UTs. Bandwidth smearing
-    (MATISSE LOW, R ~ 30) is modelled only if you opt in with
+    Every telescope pair at each hour angle and channel, with the closure
+    phases of every triangle; the defaults resemble VLTI/MATISSE in the L band
+    with the four UTs. Bandwidth smearing (MATISSE LOW, R ~ 30) is modelled
+    only if you opt in with
     [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth].
 
     Parameters
@@ -270,18 +267,17 @@ def vlti_oidata(
     latitude_deg : float, optional
         The array's latitude (default: Paranal).
     nights_mjd : sequence of float, optional
-        Repeat the snapshots on each of these nights, given as the MJD of
-        the target's transit; each snapshot is then a frame at
-        ``night + hour_angle / 24`` (for orbits and other scenes that
-        change with time). By default the data have no times.
+        Repeat the snapshots on each night, given as the MJD of the target's
+        transit: each is a frame at ``night + hour_angle / 24`` (for scenes
+        that change with time). By default the data have no times.
 
     Returns
     -------
     OIData
-        Data with zero values, for
-        [`with_model`][virgil.oidata.OIData.with_model]. Each snapshot is a
-        frame, and each baseline carries its station pair (numbered from
-        1), so [`with_gains`][virgil.oidata.OIData.with_gains] applies.
+        Zero-valued data, for [`with_model`][virgil.oidata.OIData.with_model].
+        Each snapshot is a frame and each baseline carries its station pair
+        (numbered from 1), so [`with_gains`][virgil.oidata.OIData.with_gains]
+        applies.
     """
     stations = onp.asarray(stations, float)
     n = len(stations)

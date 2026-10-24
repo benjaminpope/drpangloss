@@ -81,37 +81,33 @@ def validate_mixed_disco_record(record):
         )
 
     if "disco_covariance" in record:
-        _check_diagonal_covariance(record["disco_covariance"], sigma)
-
-
-def _check_diagonal_covariance(covariance, sigma):
-    """DISCO errors are independent by construction; check a stored matrix.
-
-    Products need not store the covariance: ``disco_sigma`` holds all of
-    it. Older products that do are checked for consistency.
-    """
-    covariance = onp.asarray(covariance, dtype=float)
-    if covariance.shape != (sigma.size, sigma.size):
-        raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
-    if not onp.all(onp.isfinite(covariance)):
-        raise ValueError("AMIGO DISCO arrays must be finite.")
-    covariance_scale = max(
-        float(onp.max(onp.abs(onp.diag(covariance)))),
-        onp.finfo(covariance.dtype).tiny,
-    )
-    off_diagonal = covariance - onp.diag(onp.diag(covariance))
-    relative_off_diagonal = float(
-        onp.max(onp.abs(off_diagonal)) / covariance_scale
-    )
-    if relative_off_diagonal > 1e-10:
-        raise ValueError(
-            "AMIGO DISCO covariance is not diagonal: relative "
-            f"off-diagonal {relative_off_diagonal:.3g}."
+        # DISCO errors are independent by construction, and ``disco_sigma``
+        # holds all of it; older products that store the covariance are
+        # checked for consistency.
+        covariance = onp.asarray(record["disco_covariance"], dtype=float)
+        if covariance.shape != (sigma.size, sigma.size):
+            raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
+        if not onp.all(onp.isfinite(covariance)):
+            raise ValueError("AMIGO DISCO arrays must be finite.")
+        covariance_scale = max(
+            float(onp.max(onp.abs(onp.diag(covariance)))),
+            onp.finfo(covariance.dtype).tiny,
         )
-    if not onp.allclose(onp.diag(covariance), sigma**2, rtol=1e-8, atol=0.0):
-        raise ValueError(
-            "AMIGO DISCO covariance diagonal does not match sigma squared."
+        off_diagonal = covariance - onp.diag(onp.diag(covariance))
+        relative_off_diagonal = float(
+            onp.max(onp.abs(off_diagonal)) / covariance_scale
         )
+        if relative_off_diagonal > 1e-10:
+            raise ValueError(
+                "AMIGO DISCO covariance is not diagonal: relative "
+                f"off-diagonal {relative_off_diagonal:.3g}."
+            )
+        if not onp.allclose(
+            onp.diag(covariance), sigma**2, rtol=1e-8, atol=0.0
+        ):
+            raise ValueError(
+                "AMIGO DISCO covariance diagonal does not match sigma squared."
+            )
 
 
 def mixed_disco_fields(record):
