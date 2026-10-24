@@ -127,6 +127,7 @@ def test_numpyro_model_with_no_data_has_no_likelihood_site():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_with_no_data_is_the_normal_prior_mode(method):
     priors = {"a": dist.Normal(2.0, 0.5), "b": dist.Normal(-1.0, 3.0)}

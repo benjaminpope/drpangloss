@@ -338,11 +338,113 @@ def test_a_fit_stops_at_its_time_limit(monkeypatch, method, chunk):
     assert result.info["steps"] == chunk
 
 
-def test_adam_takes_no_time_limit_and_bad_limits_are_rejected():
-    with pytest.raises(ValueError, match="Adam runs exactly"):
-        fit(START, PRIORS, DATA, method="adam", time_limit=10.0)
+def test_bad_time_limits_are_rejected():
     with pytest.raises(ValueError, match="time_limit"):
         fit(START, PRIORS, DATA, time_limit=-1.0)
+
+
+def _adam(**kw):
+    kw = {"max_steps": 40, "method": "adam"} | kw
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return fit(START, PRIORS, DATA, **kw)
+
+
+@jax.enable_x64(True)
+def test_adam_matches_plain_optax_adam(monkeypatch):
+    import optax
+
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)  # several chunks
+    problem = cast_tree(_Objective(START, PRIORS, (DATA,)), "float64")
+    z = problem.init(None)
+    scale = float(DATA.n_independent)
+    optimizer, state = optax.adam(1e-2), optax.adam(1e-2).init(z)
+    for _ in range(40):
+        grad = jax.grad(lambda z: problem.loss(z) / scale)(z)
+        updates, state = optimizer.update(grad, state, z)
+        z = optax.apply_updates(z, updates)
+    result = _adam()
+    for path, value in problem.constrain(z).items():
+        onp.testing.assert_allclose(result.values[path], value, rtol=1e-12)
+
+
+def test_adam_loss_history_and_eps():
+    result = _adam()
+    history = result.info["loss_history"]
+    assert history.shape == (result.info["steps"],) == (40,)
+    assert "loss_history" not in fit(START, PRIORS, DATA, max_steps=3).info
+    before_last = _adam(max_steps=39).info["loss"]
+    assert history[-1] == pytest.approx(before_last, rel=1e-12)
+    other = _adam(adam_eps=1.0)
+    assert not onp.allclose(
+        other.values["dra"], result.values["dra"], rtol=1e-6
+    )
+
+
+def test_adam_ftol_stops_at_the_first_plateau_step(monkeypatch):
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)
+    full = _adam(max_steps=120).info["loss_history"]
+    window = 10
+    gaps = full[:-window] - full[window:]
+    ftol = float(onp.sort(gaps)[len(gaps) // 2])  # fires about halfway
+    t = window + int(onp.flatnonzero(gaps < ftol)[0])
+    result = _adam(max_steps=120, ftol_abs=ftol, ftol_window=window)
+    assert result.info["steps"] == t and t % 7 != 0  # mid-chunk
+    assert result.info["converged"] is True and result.info["stop"] is None
+    onp.testing.assert_array_equal(result.info["loss_history"], full[:t])
+    stopped_at_t = _adam(max_steps=t)
+    for path in PRIORS:
+        onp.testing.assert_array_equal(
+            result.values[path], stopped_at_t.values[path]
+        )
+
+
+def test_adam_stops_at_its_time_limit_and_reports_convergence(monkeypatch):
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 5)
+    result = _adam(max_steps=50, time_limit=0.0)
+    assert result.info["converged"] is False and result.info["stop"] == "time"
+    assert result.info["steps"] == 5
+    short = _adam(max_steps=3)
+    assert short.info["converged"] is False and short.info["stop"] == "limit"
+    loose = _adam(max_steps=3, gtol=1e30)
+    assert loose.info["converged"] is True and loose.info["stop"] is None
+
+
+def test_adam_ftol_with_a_time_limit(monkeypatch):
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)
+    reports = []
+    result = _adam(
+        max_steps=120,
+        ftol_abs=1e30,  # fires at the first step the window allows
+        ftol_window=10,
+        time_limit=1e6,
+        progress=reports.append,
+    )
+    assert result.info["steps"] == 10 and result.info["converged"] is True
+    assert result.info["stop"] is None
+    assert reports[-1]["steps"] == 10  # the final report is at the stop
+    # an expired budget stops first, at the end of the first chunk
+    late = _adam(max_steps=120, ftol_abs=1e-30, ftol_window=10, time_limit=0.0)
+    assert late.info["stop"] == "time" and late.info["steps"] == 7
+
+
+def test_bad_ftol_abs_is_rejected():
+    for bad in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ftol_abs"):
+            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
+
+
+def test_bad_ftol_window_is_rejected():
+    with pytest.raises(ValueError, match="ftol_window"):
+        fit(START, PRIORS, DATA, method="adam", ftol_window=0)
 
 
 def test_poles_of_isotropic_priors_are_not_prior_bounds():
