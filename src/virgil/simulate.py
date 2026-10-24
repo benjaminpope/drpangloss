@@ -33,16 +33,15 @@ def simulate(scene, template, key=None, noise_scale=1.0, shift_days=None):
         [`Attached`][virgil.models.Attached] components) is evaluated at
         each sample's own time, so the template needs times.
     template : OIData
-        The observation to copy: its uv samples, wavelengths, observables,
-        closure-phase correlations and projections, and errors.
+        The observation to copy: its samples, wavelengths, observables, errors,
+        closure-phase correlations and projections.
     key : jax.random.PRNGKey, optional
-        For Gaussian noise drawn with the template's errors (closure phases
-        correlated as in the template); noiseless without it.
+        Gaussian noise with the template's errors and closure-phase
+        correlations; noiseless without it.
     noise_scale : float, optional
         Multiplies the noise (not the stored errors).
     shift_days : float, optional
-        Move every sample's time by this many days, e.g. to see what the
-        same coverage would give at a later epoch of an orbit.
+        Move every sample's time by this many days (a later orbit epoch).
 
     Returns
     -------
@@ -70,8 +69,7 @@ def bias_test(scene, template, model, priors, n, key, **fit_kwargs):
         The observation to simulate.
     model, priors
         The model fitted to each simulation and its priors, as in
-        [`fit`][virgil.fitting.fit]. The model may differ from the scene
-        (that is the point of a bias test).
+        [`fit`][virgil.fitting.fit]; the model may differ from the scene.
     n : int
         Number of noise draws.
     key : jax.random.PRNGKey
@@ -82,9 +80,8 @@ def bias_test(scene, template, model, priors, n, key, **fit_kwargs):
     Returns
     -------
     dict
-        For each fitted path, the ``n`` fitted values as an array; and
-        ``chi2_red``, the reduced χ² of each fit. Compare their means and
-        spreads with the truth.
+        For each fitted path, the ``n`` fitted values as an array; and ``chi2_red``, the
+        reduced χ² of each fit. Compare their means and spreads with the truth.
     """
     results = {}
     for draw in jax.random.split(key, n):
