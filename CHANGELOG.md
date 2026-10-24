@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- New simulated radio imaging tutorial (`docs/radio_tutorial.md`, from `notebooks/radio_tutorial.ipynb`): `ComplexVisData` from arrays, CLEAN start, `fit` of an `Image` with the Toeplitz χ², and diagnostics; a Performance table skeleton in the radio guide.
 - Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
   and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
   of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's

@@ -312,6 +312,8 @@ slightly optimistic). Fit with
 
 ## Toeplitz χ² {#toeplitz-chi2}
 
+A worked example, on simulated data, is the [radio imaging tutorial](radio_tutorial.md).
+
 `fit` picks this form itself (`ComplexVisData.term(..., chi2="auto")`) when it
 is exact: one fixed `Image`, `offsets=False`, a fixed `alpha`, no
 `antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and enough points per pixel
@@ -390,6 +392,20 @@ longest baselines), and offsets beyond the precompute's bound
 (`max_offset_mas`, by default that of `nuis.priors()`) raise at run time.
 Without it, `B_d` and `D_d` need only integer lags and are exact at any
 baseline.
+
+### Performance
+
+Time of one value-and-gradient evaluation of χ² for a fixed `Image`, by path.
+The full table comes from a benchmark job (the same simulated problem at several
+sizes, CPU and GPU); only the cells with a sourced measurement are filled.
+
+| Path | CPU | GPU (A100) |
+| --- | --- | --- |
+| direct (`chi2="direct"`) | — | 735 ms |
+| nufftax backend | — | — |
+| Toeplitz (`chi2="toeplitz"`) | — | 21.8 ms (34×) |
+
+The GPU row is from an independent check on a real ALMA data set (virgil-validation).
 
 ## Diagnostics
 
