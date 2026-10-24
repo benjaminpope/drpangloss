@@ -490,6 +490,7 @@ warm up, so iterate with a single test id, then run the relevant test files. Lea
 ## Pull requests
 
 - Keep diffs small and focused on the request.
+- Never edit `CHANGELOG.md` (CI fails it outside a `release*` branch). Add a fragment to `changelog.d/` instead: one file per change, `<PR>.<type>.md`; see `changelog.d/README.md`.
 - Do not commit notebook output churn unrelated to your change.
 - Do not add runtime dependencies to `[project].dependencies` without asking.
 - The pre-push hook (`.githooks/pre-push`, via `scripts/lint_local.sh`) runs the pinned ruff through `uvx ruff@<version>`, reading the version from `[tool.ruff] required-version`, so it works in fresh worktrees without a `.venv`. Never bypass it.

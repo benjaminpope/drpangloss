@@ -118,6 +118,32 @@ jobs:
           fi
           python3 "$script" --since "origin/$BASE"
 
+  # Changelog fragments (changelog.d/README.md): only a release PR (head
+  # branch `release*`) may edit CHANGELOG.md, so parallel PRs never conflict
+  # there. A src/ change with no new fragment only warns.
+  changelog:
+    name: changelog fragments
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.head_ref }}
+    steps:
+      - name: CHANGELOG.md untouched; fragment present
+        run: |
+          files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[] | "\(.status) \(.filename)"')
+          if echo "$files" | grep -q ' CHANGELOG.md$' && [[ "$HEAD" != release* ]]; then
+            echo "::error file=CHANGELOG.md::Do not edit CHANGELOG.md; add a fragment to changelog.d/ (see its README)."
+            exit 1
+          fi
+          if echo "$files" | grep -q ' src/' && ! echo "$files" | grep -Eq '^(added|renamed) changelog\.d/[^/]+\.md$'; then
+            echo "::warning::src/ changed but no changelog.d/ fragment was added (see changelog.d/README.md)."
+          fi
+
   # Checks that need virgil importable but no JAX compiles: generated docs in
   # sync with the notebooks, notebook outputs not stale, the package layout.
   # tests.yml skips tests/lint, so one stale markdown file fails one job, not

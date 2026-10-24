@@ -31,7 +31,7 @@ NAMES = [
 
 
 # The tiers, pinned. Changing a tier, or renaming a provisional name, means
-# changing this table, docs/stability.md and the CHANGELOG together.
+# changing this table, docs/stability.md and a changelog fragment together.
 EXPECTED = {
     "virgil.epochs": {"*"},
     "virgil.aliases": {"*"},
