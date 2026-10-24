@@ -2073,8 +2073,9 @@ def log_evidence(model, data, path="env"):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
-    conditional on those held in ``model`` (or sample them with
-    [`gp_priors`][virgil.models.gp_priors] or your own log-uniform priors).
+    conditional on those held in ``model`` (or sample them:
+    [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
+    log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
     Exact only for a linear model, and it assumes correct error bars (see
     [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
     no ``noise=`` terms or per-dataset models. See
