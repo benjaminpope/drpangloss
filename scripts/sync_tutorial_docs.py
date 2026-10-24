@@ -63,6 +63,7 @@ MAPPINGS = {
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
     "notebooks/multipole_disk_rings.ipynb": "docs/multipole_disk_rings.md",
     "notebooks/pipelines.ipynb": "docs/pipelines.md",
+    "notebooks/radio_tutorial.ipynb": "docs/radio_tutorial.md",
 }
 
 
@@ -74,6 +75,7 @@ PROVISIONAL_NOTEBOOKS = {
     "notebooks/multipole_disk_rings.ipynb",
     "notebooks/imaging_clean.ipynb",
     "notebooks/pipelines.ipynb",
+    "notebooks/radio_tutorial.ipynb",
 }
 
 
