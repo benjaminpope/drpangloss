@@ -34,7 +34,7 @@ This tutorial takes a simulated ALMA-like observation from visibilities to an im
 
 ## Simulated data
 
-The truth is a 65 × 65 image of 4 mas pixels: an inclined ring of radius 60 mas holding 0.8 Jy, and a compact clump to its north-east holding 0.2 Jy. The observation tracks 300 random baselines of 100 m to 10 km for six hours at 1.3 mm from a southern site, giving 60,000 uv points. The visibilities are the exact transform of the truth plus Gaussian noise of 0.05 Jy per real and imaginary part.
+The truth is a 65 × 65 image of 4 mas pixels: an inclined ring of radius 60 mas holding 0.8 Jy, and a compact clump to its north-east holding 0.2 Jy. The observation tracks 300 random baselines for six hours (east and north components each log-uniform between 100 m and 10 km) at 1.3 mm from a southern site, giving 60,000 uv points. The visibilities are the exact transform of the truth plus Gaussian noise of 0.05 Jy per real and imaginary part.
 
 ??? note "Code"
 
@@ -69,7 +69,7 @@ priors = nuis.priors()  # just cal.flux
 
 ## A CLEAN start
 
-`radio_clean.clean` gives a first image and its restoring beam (`fit_beam` fits the beam to the dirty beam's core). The run is capped at 1000 iterations: this dataset has a dynamic range of about 500 and CLEAN is not driven to a threshold below the noise here. We compare reconstructions through that beam, which is what a perfect image would look like at this resolution.
+`radio_clean.clean` gives a first image and its restoring beam (`fit_beam` fits the beam to the dirty beam's core). **Known problem ([virgil#551](https://github.com/benjaminpope/virgil/issues/551)):** on this dataset (dynamic range about 1000) `clean` diverges if it runs long: the peak residual rises inside a minor cycle and the model flux reaches 10³ Jy by 12,000 iterations, so a lower `threshold` or a larger `niter` gives a nonsense model. The cell below stops at 1000 iterations, before that happens, and does not reach the 3σ threshold it asks for. We compare reconstructions through that beam, which is what a perfect image would look like at this resolution.
 
 ```python
 sigma_img = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))  # thermal noise of the natural-weighted image

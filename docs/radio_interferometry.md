@@ -395,17 +395,20 @@ baseline.
 
 ### Performance
 
-Time of one value-and-gradient evaluation of χ² for a fixed `Image`, by path.
-The full table comes from a benchmark job (the same simulated problem at several
-sizes, CPU and GPU); only the cells with a sourced measurement are filled.
+Time of one value-and-gradient evaluation of χ² for a pixel `Image`, by path. The full table
+comes from a benchmark job (the simulated problem of the [radio imaging tutorial](radio_tutorial.md)
+at several sizes, CPU and GPU, exact path with `offsets=False`); only the cells with a sourced
+measurement are filled, and they do not all share one setup.
 
 | Path | CPU | GPU (A100) |
 | --- | --- | --- |
-| direct (`chi2="direct"`) | — | 735 ms |
-| nufftax backend | — | — |
-| Toeplitz (`chi2="toeplitz"`) | — | 21.8 ms (34×) |
+| direct, exact DFT (`ft="dft"`) | — | — |
+| direct, nufftax backend (`ft="nufft"`, eps 1e-6) | — | 735 ms |
+| Toeplitz (`chi2="toeplitz"`), exact path | — | — |
+| Toeplitz with free offsets (`offsets="spread"`) | — | 21.8 ms (34× the nufftax cell) |
 
-The GPU row is from an independent check on a real ALMA data set (virgil-validation).
+The two GPU cells are from one independent check on a real ALMA data set (virgil-validation, float64): 42.4 M points,
+26 ddids, 1028² pixels of 5 mas, with gain and offset gradients.
 
 ## Diagnostics
 
