@@ -36,20 +36,7 @@ _PIPELINES = {
 }
 
 
-def _settings(pairs):
-    settings = {}
-    for pair in pairs or []:
-        key, sep, value = pair.partition("=")
-        if not sep:
-            raise SystemExit(f"--set expects key=value; got {pair!r}.")
-        try:
-            settings[key.strip()] = json.loads(value)
-        except json.JSONDecodeError:
-            settings[key.strip()] = value
-    return settings
-
-
-def _run(args):
+def _run(args):  # deliberate: argparse callback
     import importlib
 
     module, name = _PIPELINES[args.command]
@@ -57,18 +44,24 @@ def _run(args):
     second = getattr(args, "model", None)
     if getattr(args, "metadata", None):
         second = read_json(Path(args.metadata))
+    settings = {}
+    for pair in args.set or []:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise SystemExit(f"--set expects key=value; got {pair!r}.")
+        try:
+            settings[key.strip()] = json.loads(value)
+        except json.JSONDecodeError:
+            settings[key.strip()] = value
     pipeline = cls.from_oifits(
-        args.data,
-        second,
-        output=args.output,
-        **_settings(args.set),
+        args.data, second, output=args.output, **settings
     )
     res = pipeline.run(through=args.through, resume=not args.fresh)
     print(res.describe())
     return 0
 
 
-def _info(args):
+def _info(args):  # deliberate: argparse callback
     folder = Path(args.dir)
     run = read_json(folder / "run.json")
     print(
@@ -105,9 +98,16 @@ _REQUIRED_KEYS = (
 _STATUSES = ("running", "partial", "complete", "failed")
 
 
-def _record_problems(run):
-    """Problems with the contents of ``run.json`` itself."""
-    problems = []
+def _validate(args):  # deliberate: argparse callback
+    folder = Path(args.dir)
+    try:
+        run = read_json(folder / "run.json")
+        if not isinstance(run, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as err:
+        print(f"invalid: cannot read run.json ({err})")
+        return 1
+    problems = []  # the contents of run.json itself
     if run.get("schema") != SCHEMA:
         problems.append(f"unknown schema {run.get('schema')!r}")
     if run.get("status") not in _STATUSES:
@@ -126,22 +126,14 @@ def _record_problems(run):
             f"the run failed in stage {error.get('stage')!r}: "
             f"{error.get('type')}: {error.get('message')}"
         )
-    return problems
-
-
-def _summary_problems(folder, run):
     try:
         summary = read_json(folder / "summary.json")
     except (OSError, ValueError) as err:
-        return [f"cannot read summary.json ({err})"]
-    if summary.get("schema") != run.get("schema"):
-        return ["summary.json schema differs from run.json"]
-    return []
-
-
-def _file_problems(folder, run):
-    """Missing stage outputs, and files that changed since the run."""
-    problems = []
+        problems.append(f"cannot read summary.json ({err})")
+    else:
+        if summary.get("schema") != run.get("schema"):
+            problems.append("summary.json schema differs from run.json")
+    # Missing stage outputs, and files that changed since the run.
     for name, entry in run.get("stages", {}).items():
         if entry.get("status") != "complete":
             continue
@@ -156,23 +148,6 @@ def _file_problems(folder, run):
             problems.append(f"missing {rel}")
         elif sha256_file(path) != digest:
             problems.append(f"{rel} changed since the run")
-    return problems
-
-
-def _validate(args):
-    folder = Path(args.dir)
-    try:
-        run = read_json(folder / "run.json")
-        if not isinstance(run, dict):
-            raise ValueError("not a JSON object")
-    except (OSError, ValueError) as err:
-        print(f"invalid: cannot read run.json ({err})")
-        return 1
-    problems = (
-        _record_problems(run)
-        + _summary_problems(folder, run)
-        + _file_problems(folder, run)
-    )
     if problems:
         print("invalid:")
         for problem in problems:
@@ -182,7 +157,7 @@ def _validate(args):
     return 0
 
 
-def _quicklook(args):
+def _quicklook(args):  # deliberate: argparse callback
     from ._quicklook import write_quicklook
 
     path = write_quicklook(args.dir, execute=not args.no_execute)
