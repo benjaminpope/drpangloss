@@ -60,7 +60,6 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- Inlined about sixty per cent of the single-use private helpers in `detection`, `limits`, `grid_fit`, `gains`, `spectra`, `observables`, `plotting` and `_deprecate`; no behaviour change.
 - Code shape (#536, batch I): `oifits`, `oidata`, `amigo` and `legacy` inline 23 single-use private helpers in `oifits.py` and 3 elsewhere, and trim long docstrings to the calling contract. Behaviour and OIFITS round trips are unchanged.
 - The disk, image and quicklook pipeline modules lose a dozen single-use private helpers and a few docstring lines; no behaviour change.
 - `ComplexVisData.term` takes `chi2="auto"|"direct"|"toeplitz"` (default `"auto"`). `fit` then uses the exact Toeplitz (dirty-beam) χ² where it applies: one fixed `Image`, a fixed `alpha`, `offsets=False`, no `antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and at least `toeplitz_min_points` points and `toeplitz_points_per_pixel` per pixel and ddid (`set_ft_defaults`). Otherwise the direct term is used; `"toeplitz"` raises a `ValueError` naming the unmet condition. The beams take about 24 N² bytes of device memory per ddid; auto stays direct above `toeplitz_max_bytes` (4 GB), and `chi2="direct"` opts out. `FitResult.info["likelihood_forms"]` says what ran (and why auto fell back), and a Toeplitz term's `info["chi2"]` is re-evaluated directly at the result. `numpyro_model` and the training fits of `cross_validate` stay direct.
