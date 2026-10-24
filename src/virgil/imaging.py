@@ -600,11 +600,13 @@ def _squared_visibilities(d):  # deliberate: named step of second_moment_fwhm
 def second_moment_fwhm(data, v2_min=0.3):
     """The FWHM (mas) of the Gaussian that the short baselines see.
 
-    Fits ``-ln V² = π² θ² ρ² / (2 ln 2)`` (ρ = B / λ, cycles per radian) by
-    weighted least squares on the unflagged samples with ``V² ≥ v2_min``. It is
-    the rms width of the whole source, a star included, so it is meaningless
-    when a bright unresolved component (flux fraction above about 0.55) keeps V²
-    above ``v2_min`` on every baseline: use
+    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)`` (ρ = B /
+    λ, cycles per radian), and any normalized source has this form to second
+    order in ρ. It is fitted by weighted least squares on the unflagged samples
+    with ``V² ≥ v2_min``, needing no image and no fit. It is the rms width of
+    the whole source, a star included, so it is meaningless when a bright
+    unresolved component (flux fraction above about 0.55) keeps V² above
+    ``v2_min`` on every baseline: use
     [`envelope_fwhm`][virgil.imaging.envelope_fwhm] there.
 
     Parameters
@@ -761,8 +763,9 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
         Pixel size in mas.
     flux_ratio : float, optional
         Flux of extended emission relative to a star at the origin: the
-        best-fitting point source at the origin is subtracted and the image scaled by
-        ``(1 + flux_ratio) / flux_ratio``, so the map shows the emission alone.
+        best-fitting point source at the origin is subtracted and the image
+        scaled by ``(1 + flux_ratio) / flux_ratio``, so the map shows the
+        emission alone.
 
     Returns
     -------
@@ -1027,8 +1030,9 @@ def convolve_beam(image, pixel_scale_mas, beam):
     The "restored" image of radio astronomy: it shows only what the data
     resolve, so convolve both reconstructions to compare them. The kernel is
     an elliptical Gaussian with the beam's FWHMs and position angle (North to
-    East), normalized to unit sum. Flux beyond the edge is taken to be zero, so
-    structure within about a beam of the edge is dimmed.
+    East), normalized to unit sum on an odd grid centred on a pixel. Flux
+    beyond the edge is taken to be zero, so structure within about a beam of
+    the edge is dimmed.
 
     Parameters
     ----------
@@ -2073,8 +2077,8 @@ def log_evidence(model, data, path="env"):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
-    conditional on those held in ``model`` (or sample them:
-    [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
+    conditional on those held in ``model`` (or sample them: log-uniform priors
+    from [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
     log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
     Exact only for a linear model, and it assumes correct error bars (see
     [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
@@ -2333,31 +2337,6 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
-def _check_scalable_blocks(datasets):  # deliberate: named check of error_scale
-    """Refuse data whose covariance is not ``s_b² D`` per block (gains, closure
-    offsets, marginalized or finite-``prior_width`` extras): their nuisance widths
-    do not scale with the quoted errors.
-    """
-    for i, d in enumerate(datasets):
-        reasons = []
-        if d.gains is not None:
-            reasons.append("calibration gains (with_gains)")
-        if d.phase_offsets is not None:
-            reasons.append("closure-phase offsets (with_closure_offsets)")
-        for b in d.extras:
-            if b.model_dependent_covariance:
-                reasons.append(f"a marginalized {b.kind} block")
-            elif getattr(b, "prior_width", None) is not None:
-                reasons.append(f"a {b.kind} block with a finite prior_width")
-        if reasons:
-            raise ValueError(
-                f"error_scale(by_observable=True) cannot rescale dataset {i}: "
-                f"it has {', '.join(reasons)}, whose nuisance widths do not "
-                "scale with the quoted errors. Estimate the scales without "
-                "them, or fit the nuisance widths as noise terms."
-            )
-
-
 def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
@@ -2400,7 +2379,28 @@ def error_scale(model, data, path="env", *, by_observable=False):
     r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     datasets = _as_list(data)
     if by_observable:
-        _check_scalable_blocks(datasets)
+        # Refuse data whose covariance is not s_b² D per block: their nuisance
+        # widths do not scale with the quoted errors.
+        for i, d in enumerate(datasets):
+            reasons = []
+            if d.gains is not None:
+                reasons.append("calibration gains (with_gains)")
+            if d.phase_offsets is not None:
+                reasons.append("closure-phase offsets (with_closure_offsets)")
+            for b in d.extras:
+                if b.model_dependent_covariance:
+                    reasons.append(f"a marginalized {b.kind} block")
+                elif getattr(b, "prior_width", None) is not None:
+                    reasons.append(
+                        f"a {b.kind} block with a finite prior_width"
+                    )
+            if reasons:
+                raise ValueError(
+                    f"error_scale(by_observable=True) cannot rescale dataset {i}: "
+                    f"it has {', '.join(reasons)}, whose nuisance widths do not "
+                    "scale with the quoted errors. Estimate the scales without "
+                    "them, or fit the nuisance widths as noise terms."
+                )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
         beta = _block_precisions(r, onp.asarray(jac), rows, counts)

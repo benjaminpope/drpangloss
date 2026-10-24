@@ -82,11 +82,12 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
 
     ``S_jk ∝ (κ² + λ_jk)^(-order)``, with ``κ = 1 / length_mas`` and ``λ_jk``
     the eigenvalues of the reflecting-boundary (Neumann) Laplacian on the pixel
-    grid. With two lengths ``(ℓ_row, ℓ_col)`` the field is anisotropic,
-    ``S_jk ∝ (1 + ℓ_row² λ_j + ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row``
-    down a column and over ``ℓ_col`` along a row. The constant mode is zero (a
-    softmax image does not depend on it) and the spectrum is scaled so the
-    field's pixel-averaged variance is ``sigma²``.
+    grid, ``λ_jk = (2/h)² [sin²(πj/2n) + sin²(πk/2m)]``. With two lengths
+    ``(ℓ_row, ℓ_col)`` the field is anisotropic, ``S_jk ∝ (1 + ℓ_row² λ_j +
+    ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row`` down a column and over
+    ``ℓ_col`` along a row. The constant mode is zero (a softmax image does not
+    depend on it) and the spectrum is scaled so the field's pixel-averaged
+    variance is ``sigma²``.
 
     Parameters
     ----------

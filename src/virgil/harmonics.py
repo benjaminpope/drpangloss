@@ -120,10 +120,11 @@ def image_from_linear(c, s):
 def von_mises_image_harmonics(kappa, theta0, degree, n_fft):
     r"""Image harmonics of $\exp[\kappa \cos(\theta - \theta_0)]$.
 
-    $I_m = [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$ ($I_m(\kappa)$ the modified
-    Bessel function), computed by a small FFT of $\exp[\kappa(\cos\theta_j - 1)]$ on ``n_fft`` points. The aliasing error
-    is $I_{n_{\rm fft} - m}/I_0$, negligible unless $\kappa$ is of the order
-    of ``n_fft**2 / 30``.
+    $I_m = [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$ ($I_m(\kappa)$ the
+    modified Bessel function), computed by a small FFT of
+    $\exp[\kappa(\cos\theta_j - 1)]$ on ``n_fft`` points. The aliasing error is
+    $I_{n_{\rm fft} - m}/I_0$, negligible unless $\kappa$ is of the order of
+    ``n_fft**2 / 30``.
 
     Parameters
     ----------
