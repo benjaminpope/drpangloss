@@ -174,6 +174,7 @@ def test_a_known_diagonal_metric_is_removed():
     assert stats["floored"] == 0.0
 
 
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
 def test_adam_with_a_metric_reaches_the_same_optimum():
     priors = {"x": dist.ImproperUniform(dist.constraints.real, (), (24,))}
     result = fit(
@@ -189,6 +190,66 @@ def test_adam_with_a_metric_reaches_the_same_optimum():
     )
     onp.testing.assert_allclose(result.values["x"], 1.0, atol=1e-2)
     assert result.info["precondition"] == "diag"
+
+
+@jax.enable_x64(True)
+def test_adam_with_a_metric_follows_the_unchunked_step(monkeypatch):
+    import optax
+
+    import virgil.fitting
+    from virgil.fitting import _InMetric, _metric, _scaled_loss
+
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)
+    problem = cast_tree(_Objective(START, PRIORS, (DATA,)), "float64")
+    z0 = problem.init(None)
+    scale = float(DATA.n_independent)
+    metric, _ = _metric(problem, z0, scale)
+    reference = _InMetric(problem, metric.normalized())
+    grad = jax.grad(_scaled_loss(reference, scale))
+    optimizer = optax.adam(1e-2)
+    zt = jax.tree.map(np.zeros_like, z0)
+    state = optimizer.init(zt)
+    for _ in range(40):
+        updates, state = optimizer.update(grad(zt), state, zt)
+        zt = optax.apply_updates(zt, updates)
+    expected = problem.constrain(metric.normalized().to_z(zt))
+    result = fit(
+        START, PRIORS, DATA, method="adam", max_steps=40, precondition="diag"
+    )
+    for path, value in expected.items():
+        onp.testing.assert_allclose(result.values[path], value, rtol=1e-12)
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+def test_adam_reports_a_non_finite_loss():
+    priors = {"x": dist.ImproperUniform(dist.constraints.real, (), (24,))}
+    result = fit(
+        _no_model,
+        priors,
+        (),
+        init={"x": np.zeros(24)},
+        likelihoods=[_quadratic_term],
+        method="adam",
+        max_steps=60,
+        learning_rate=1e200,
+    )
+    assert result.info["stop"] == "non-finite"
+    assert result.info["converged"] is False
+
+
+def test_adam_ftol_with_a_metric():
+    result = fit(
+        START,
+        PRIORS,
+        DATA,
+        method="adam",
+        max_steps=500,
+        precondition="diag",
+        ftol_abs=1e30,
+        ftol_window=5,
+    )
+    assert result.info["steps"] == 5 and result.info["converged"] is True
+    assert result.info["loss_history"].shape == (5,)
 
 
 def test_the_optimum_and_the_gradient_norm_are_unchanged():
@@ -385,6 +446,7 @@ def test_lm_sees_the_gauge_direction_through_one_extra_residual():
         assert float(along[n]) == pytest.approx(1.0, abs=1e-12)
 
 
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.parametrize(
     "method, precondition",
     [("lm", None), ("lbfgs", None), ("lbfgs", "diag"), ("adam", "diag")],
