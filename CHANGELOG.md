@@ -54,6 +54,11 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `test_fit_reaches_the_direct_optimum` no longer fails on some CI runner CPUs
+  (#528): the fitted `cal.sigma` of two optimiser paths is compared at 1e-6,
+  and the two terms' `sigma` at the same parameters at 1e-12.
+- The `precondition="diag"` example in `docs/conventions.md` is self-contained.
+- `test_the_fitted_log_brightness_is_gauge_fixed_for_every_method` holds `logsumexp` to 1e-9 only in float64, and to a few float32 eps otherwise (one ulp was 2.4e-7).
 - `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
   added to it changes no image, and LM's QR solve drifted along that direction
   by rounding noise (to 4e5 or 3.6e10, depending on platform). The fitted
