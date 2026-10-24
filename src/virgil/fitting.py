@@ -635,7 +635,9 @@ class FitResult:
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset and then per
-        likelihood term; ``chi2_red``,
+        likelihood term (a Toeplitz term's, re-evaluated directly at the
+        result); ``likelihood_forms``, what each term ran (``"toeplitz"``,
+        ``"direct"``, or ``"direct (auto): <unmet conditions>"``); ``chi2_red``,
         the total χ² per data point; and ``grad_norm``, the infinity norm
         (largest absolute component) of the gradient of the loss per data
         point at the result, in the unconstrained coordinates of the
@@ -723,7 +725,7 @@ def fit(
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. A maximum-entropy pixel's curvature is its
-        metric ``weight * b``; float32 can stall at weak weights, so use float64
+        metric ``weight * b * (1 - b)`` (unsmoothed pixels); float32 can stall at weak weights, so use float64
         there.
         Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
         [Hutchinson (1989)](../references.md#hutchinson1989).
@@ -768,6 +770,21 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
+        if method not in ("lm", "lbfgs", "adam"):
+            raise ValueError(
+                f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
+            )
+        originals = problem.likelihoods
+        resolved = [
+            t.resolve(start, method == "lm")
+            if hasattr(t, "resolve")
+            else (t, "direct")
+            for t in originals
+        ]
+        if originals:
+            problem = eqx.tree_at(
+                lambda p: p.likelihoods, problem, tuple(t for t, _ in resolved)
+            )
         ndata += [
             int(term.n_data)
             if hasattr(term, "n_data")
@@ -799,7 +816,7 @@ def fit(
                 budget,
                 precondition,
             )
-        elif method == "adam":
+        else:
             if budget.chunked:
                 raise ValueError(
                     "Adam runs exactly max_steps steps: set those, not "
@@ -820,10 +837,6 @@ def fit(
                 None if metric is None else metric.normalized(),
             )
             converged = None
-        else:
-            raise ValueError(
-                f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
-            )
         z = _recentre(problem, z)
         model = problem.build(z)
         values = problem.constrain(z)
@@ -839,6 +852,9 @@ def fit(
                 stacklevel=external_stacklevel(),
             )
         chi2 = [float(c) for c in chi2]
+        for i, (old, (new, _)) in enumerate(zip(originals, resolved)):
+            if new is not old:  # report the direct χ², which cancels no terms
+                chi2[len(problem.data) + i] = float(_direct_chi2(old, values))
         info = {
             "method": method,
             "converged": converged,
@@ -846,6 +862,7 @@ def fit(
             "steps": steps,
             "loss": loss,
             "chi2": chi2,
+            "likelihood_forms": [form for _, form in resolved],
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
@@ -1237,6 +1254,12 @@ def _forward_summary(problem, z):
         else:
             chi2.append(np.sum(term(values) ** 2))
     return problem.loss(z) + problem.loss_constant, chi2
+
+
+@eqx.filter_jit
+def _direct_chi2(term, values):
+    """χ² of a residual term, compiled once per shape."""
+    return np.sum(term(values) ** 2)
 
 
 @eqx.filter_jit
@@ -1645,7 +1668,7 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b``:
+    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b * (1 - b)`` (the softmax's, unsmoothed pixels):
     the data JᵀJ and the other terms are dropped there (measured faster than
     adding them), so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
@@ -1654,7 +1677,10 @@ def gauss_newton_diag(
 
     Source: [Bekas et al. (2007)](../references.md#bekas2007) and
     [Hutchinson (1989)](../references.md#hutchinson1989) probes;
-    [Skilling & Bryan (1984)](../references.md#skillingbryan1984).
+    [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
+    [Cornwell & Evans (1985)](../references.md#cornwellevans1985);
+    Gauss–Newton curvature after [Martens (2010)](../references.md#martens2010)
+    and [Schraudolph (2002)](../references.md#schraudolph2002).
 
     Parameters
     ----------

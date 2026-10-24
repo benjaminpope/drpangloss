@@ -60,6 +60,8 @@ out = cross_validate(
 out["settings"][out["best"]], out["settings"][out["one_se"]], out["edge"]
 ```
 
+The fits stay on the direct radio term (`chi2="auto"` is switched off for them).
+
 `aggregate` returns arrays and dicts, with no plotting: `settings`,
 `fold_scores` (settings × folds), `score` (the sum over folds), `mean` and
 `sd` over folds, `se = sd/√K`, `best` (the smallest mean), `one_se` (the most
