@@ -34,8 +34,8 @@ adjoint NUFFT into a dirty image in Jy/beam (so a point source of flux `F`
 peaks at `F`). No gridding of the data is done. Each **minor cycle** works
 on that residual image alone: it finds the peak, adds `gain` times it as a
 component, and subtracts the PSF there, in a window of `psfpatch` pixels
-(Clark 1980; the PSF is computed on twice the image, as in CASA, so the
-window can reach every pixel from any component), until the peak falls below the *cycle threshold*
+(Clark 1980; the PSF is computed out to `psfpatch` or the far edge of the
+image from any component, as in CASA, not on the image grid alone), until the peak falls below the *cycle threshold*
 
 ```
 max(threshold, nsigma × rms,  f × peak),   f = clip(cyclefactor × sidelobe,

@@ -209,8 +209,8 @@ def _minor_cycle(
     H_ss`` is added, and the cross-convolved PSF is subtracted from every
     smoothed residual in a window of half-width ``patch`` (Clark's
     restriction). A single scale 0 is Högbom's CLEAN. ``psf`` is the dirty
-    beam on a grid twice the image's, so a window reaches every pixel from
-    any component. The cycle also ends if its peak rises 10 per cent above
+    beam out to the farthest pixel a window can reach (at most the whole
+    image from any component, so larger than the image grid). The cycle also ends if its peak rises 10 per cent above
     its running minimum (divergence). Returns the components
     ``(n_scales, n, n)`` and the iteration count.
     """
@@ -509,8 +509,9 @@ def clean(
     smallscalebias : float
         Preference for small scales, 0 to 1.
     psfpatch : int
-        Half-width in pixels of the PSF window subtracted per iteration; the
-        PSF is computed on twice the image, so up to ``npix - 1``.
+        Half-width in pixels of the PSF window subtracted per iteration, up
+        to ``npix - 1`` (the PSF is computed that far out, as in CASA, not on
+        the image grid alone).
     mask : array of bool, optional
         Where to clean; default the whole image.
     usemask : {"user", "auto-multithresh"}, sidelobethreshold, noisethreshold,
@@ -571,9 +572,15 @@ def clean(
 
         ones = onp.ones(len(data), onp.complex128)
         psf = dirty(ones)
-        # twice the image: a component anywhere sees the PSF out to the far edge
+        # the minor cycle's PSF: every window it uses (up to psfpatch plus the
+        # smoothing tails), and at most the whole image from any component
+        seff = onp.sqrt(2.0) * max(scales) * FWHM_TO_SIGMA
+        reach = min(
+            npix - 1,
+            int(max(psfpatch, onp.ceil(2.5 * seff)) + onp.ceil(4 * seff)),
+        )
         psf2 = data._adjoint(
-            ones, w, 2 * npix - 1, pixel_scale_mas, chunk_size
+            ones, w, 2 * reach + 1, pixel_scale_mas, chunk_size
         )
         beam = fit_beam(psf, pixel_scale_mas, psfcutoff)
         lab, _ = ndimage.label(

@@ -267,3 +267,11 @@ def test_clean_stops_with_diverged_when_the_psf_window_is_too_small():
     assert (
         res.history[-1]["peak_residual"] < 10 * res.history[0]["peak_residual"]
     )
+
+
+def test_the_returned_psf_and_restoring_beam_stay_image_sized():
+    # only the minor cycle's PSF is larger than the image
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=50, threshold=1e-3)
+    assert res.psf.shape == res.residual.shape == (65, 65)
+    assert res.beam == fit_beam(res.psf, 4.0)
