@@ -305,8 +305,61 @@ def test_one_component_clears_the_whole_residual_with_the_full_window():
         bias=0.6,
         patch=256,
     )
-    _, used = _minor_cycle(resid, full, **kw)
+    _, used, _ = _minor_cycle(resid, full, **kw)
     assert used == 1
     # the image-sized PSF leaves the far sidelobes behind (virgil#551)
-    _, used = _minor_cycle(resid, full[c : c + n, c : c + n], **kw)
+    _, used, _ = _minor_cycle(resid, full[c : c + n, c : c + n], **kw)
     assert used > 1
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        dict(
+            deconvolver="multiscale",
+            scales_mas=[0, 16, 48],
+            usemask="auto-multithresh",
+        ),
+        dict(weighting="briggs", robust=0.0),
+    ],
+    ids=["multiscale-auto-multithresh", "briggs"],
+)
+def test_convergent_runs_are_not_stopped_as_diverged(kw):
+    data = _sparse_track_data()
+    sigma = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))
+    res = clean(data, 65, 4.0, niter=3000, threshold=3 * sigma, **kw)
+    assert res.stop == "threshold"
+    assert res.model.sum() == pytest.approx(1.0, abs=0.01)
+    # each major cycle that was followed by a minor cycle says why it ended
+    assert all(
+        h["minor_stop"] in ("threshold", "diverged", "niter")
+        for h in res.history[:-1]
+    )
+
+
+def test_the_minor_cycle_psf_agrees_with_the_image_sized_one():
+    # the 2N - 1 PSF is the same adjoint on a bigger grid: peak at its centre,
+    # equal to the image-sized PSF in the overlap to the NUFFT's accuracy
+    n = 65
+    data = _sparse_track_data(n)
+    w = data._imaging_weights(
+        "natural", 0.5, 1 / (n * 4.0 * mas2rad), None, None, uvtaper=None
+    )
+    ones = onp.ones(len(data), complex)
+    small = data._adjoint(ones, w, n, 4.0, 10**6)
+    large = data._adjoint(ones, w, 2 * n - 1, 4.0, 10**6)
+    assert onp.unravel_index(large.argmax(), large.shape) == (n - 1, n - 1)
+    overlap = large[n // 2 : n // 2 + n, n // 2 : n // 2 + n]
+    assert onp.abs(overlap - small).max() < 1e-5
+
+
+def test_the_returned_psf_and_beam_match_stored_reference_values():
+    # values from clean() on main, before the minor cycle got its own PSF
+    res = clean(_sparse_track_data(), 65, 4.0, niter=0)
+    assert res.beam == pytest.approx(
+        (49.0283201406404, 45.953434550067186, 130.89339973020668), rel=1e-9
+    )
+    assert res.psf.sum() == pytest.approx(570.4904774509284, rel=1e-9)
+    assert (res.psf**2).sum() == pytest.approx(137.9294823556553, rel=1e-9)
+    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, rel=1e-9)
+    assert res.psf[10, 50] == pytest.approx(0.11298123905795, rel=1e-9)

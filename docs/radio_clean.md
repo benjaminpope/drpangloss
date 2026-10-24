@@ -34,8 +34,7 @@ adjoint NUFFT into a dirty image in Jy/beam (so a point source of flux `F`
 peaks at `F`). No gridding of the data is done. Each **minor cycle** works
 on that residual image alone: it finds the peak, adds `gain` times it as a
 component, and subtracts the PSF there, in a window of `psfpatch` pixels
-(Clark 1980; the PSF is computed out to `psfpatch` pixels, up to the far
-edge of the image from any component, not on the image grid alone), until the peak falls below the *cycle threshold*
+(Clark 1980), until the peak falls below the *cycle threshold*
 
 ```
 max(threshold, nsigma × rms,  f × peak),   f = clip(cyclefactor × sidelobe,
@@ -44,11 +43,17 @@ max(threshold, nsigma × rms,  f × peak),   f = clip(cyclefactor × sidelobe,
 
 (`sidelobe` is the PSF's highest sidelobe outside the main lobe), or
 `cycleniter` iterations. The sidelobes the window left out are removed by the
-next major cycle, which recomputes the residual exactly (Schwab 1984). The
+next major cycle, which recomputes the residual exactly (Schwab 1984).
+The minor cycle's PSF is computed out to `psfpatch` pixels (at most `npix - 1`,
+as a component near one edge needs the PSF out to the opposite edge), not just
+on the image grid; where that reach is capped at `npix - 1`, the tails of the
+largest multiscale kernels are truncated slightly near the corners. The
 loop ends at `threshold`, `nsigma`, `niter`, `time_limit` or `diverged`;
 `RadioCleanResult.stop` says which. As in `tclean`, a minor cycle ends early
-if its peak rises 10 per cent above its running minimum, and the run stops
-(`"diverged"`) if the peak residual grows by 50 per cent over a major cycle.
+if its peak rises 10 per cent above its running minimum (per scale; the
+`minor_stop` of each `history` entry says why it ended), and the run stops
+(`"diverged"`) if the whole-image peak residual grows by more than 3.0,
+relative, over the previous major cycle or the minimum so far.
 
 **Multi-scale** (Cornwell 2008): the components are Gaussians of the given
 `scales_mas` (FWHM in mas; 0 is a point). At each iteration the scale and

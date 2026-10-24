@@ -37,11 +37,14 @@ FWHM_TO_SIGMA = 1.0 / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))
 # ----------------------------------------------------------------------
 
 
-# CASA tclean's divergence tests: a minor cycle stops when its peak residual
-# exceeds its running minimum by 10 per cent, and the run stops when the
-# peak residual grows by 50 per cent over one major cycle.
-_MINOR_RISE = 1.1
-_MAJOR_RISE = 1.5
+# CASA's divergence tests (CASAdocs, synthesis imaging, Iteration Control), as
+# relative increases of the peak residual: a minor cycle ends at 10 per cent
+# above its running minimum (the stop-code table says "from minimum", the text
+# "from the previous peak"; virgil uses the minimum, per scale); the run stops
+# at more than 3.0 above the previous major cycle or above the minimum so far,
+# both over the whole image, mask ignored.
+_MINOR_RISE = 0.1
+_MAJOR_RISE = 3.0
 
 
 def _gaussian(shape, centre, bmaj, bmin, pa_deg):
@@ -212,7 +215,8 @@ def _minor_cycle(
     beam out to the farthest lag a window uses, so larger than the image
     grid. The cycle also ends if a scale's peak rises 10 per cent above its
     running minimum (divergence). Returns the components
-    ``(n_scales, n, n)`` and the iteration count.
+    ``(n_scales, n, n)``, the iteration count and why the cycle ended
+    (``"threshold"``, ``"diverged"`` or ``"niter"``).
     """
     scales = [float(s) for s in scales]
     sig = [s * FWHM_TO_SIGMA for s in scales]
@@ -271,7 +275,7 @@ def _minor_cycle(
 
     tmax = tile_max(big)
     comps = onp.zeros((nsc, ny, nx))
-    done, lowest = 0, onp.full(nsc, onp.inf)
+    done, lowest, why = 0, onp.full(nsc, onp.inf), "niter"
     for done in range(1, niter + 1):
         s, ty, tx = onp.unravel_index(onp.argmax(tmax), tmax.shape)
         blk = big[s, ty * tile : (ty + 1) * tile, tx * tile : (tx + 1) * tile]
@@ -279,8 +283,9 @@ def _minor_cycle(
         y, x = ty * tile + iy, tx * tile + ix
         amp = big[s, y, x] / (norm[s] * hdiag[s])
         peak = abs(amp * resp[s])
-        if peak < threshold or peak > _MINOR_RISE * lowest[s]:
+        if peak < threshold or peak > (1 + _MINOR_RISE) * lowest[s]:
             done -= 1
+            why = "threshold" if peak < threshold else "diverged"
             break
         lowest[s] = min(lowest[s], peak)
         a = gain * amp
@@ -300,7 +305,7 @@ def _minor_cycle(
             )[0]
     out = onp.zeros((nsc,) + residual.shape)
     out[:, r0:r1, c0:c1] = comps
-    return out, done
+    return out, done, why
 
 
 # ----------------------------------------------------------------------
@@ -335,12 +340,14 @@ class RadioCleanResult:
     stop : str
         ``"threshold"``, ``"nsigma"``, ``"niter"``, ``"time_limit"`` or
         ``"no_progress"`` (no component above the cycle threshold) or
-        ``"diverged"`` (the peak residual grew by 50 per cent over a major
-        cycle, as in ``tclean``; ``model`` and ``residual`` are then those
-        of the cycle that diverged).
+        ``"diverged"`` (the peak residual grew by more than 3.0, relative, over
+        the previous major cycle or the minimum so far, as in ``tclean``;
+        ``model`` and ``residual`` are then those of the cycle that diverged).
     history : list of dict
         One entry per major cycle: iterations so far, peak residual (Jy/beam),
-        rms (Jy/beam), model flux (Jy), wall time (s).
+        rms (Jy/beam), model flux (Jy), wall time (s), and ``minor_stop``,
+        why the minor cycle that followed ended (``"threshold"``,
+        ``"diverged"`` or ``"niter"``).
     """
 
     image: onp.ndarray
@@ -593,6 +600,7 @@ def clean(
         model = onp.zeros(shape)
         use = mask.copy() if usemask == "user" else onp.zeros(shape, bool)
         history, total, stop = [], 0, "niter"
+        prev, lowest_whole = onp.inf, onp.inf
         while True:
             if total:
                 resid = dirty(
@@ -635,12 +643,13 @@ def clean(
             if peak < floor:
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
                 break
-            if (
-                len(history) > 1
-                and peak > _MAJOR_RISE * history[-2]["peak_residual"]
-            ):
+            whole = float(onp.abs(resid).max())
+            if (whole - prev) / prev > _MAJOR_RISE or (
+                whole - lowest_whole
+            ) / lowest_whole > _MAJOR_RISE:
                 stop = "diverged"
                 break
+            prev, lowest_whole = whole, min(lowest_whole, whole)
             if total >= niter:
                 break
             if time_limit and time.time() - t0 > time_limit:
@@ -649,7 +658,7 @@ def clean(
             n_max = niter - total
             if cycleniter > 0:
                 n_max = min(n_max, cycleniter)
-            inc, n = _minor_cycle(
+            inc, n, why = _minor_cycle(
                 resid,
                 psf2,
                 scales,
@@ -660,6 +669,7 @@ def clean(
                 smallscalebias,
                 psfpatch,
             )
+            history[-1]["minor_stop"] = why
             if n == 0:
                 stop = "no_progress"
                 break
