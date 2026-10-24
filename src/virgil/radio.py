@@ -319,7 +319,14 @@ class ComplexVisData(eqx.Module):
                         f"ddid {d} is not in the measurement set."
                     )
                 corr = corr_types[int(pol_of[d])]
-                pair = _parallel_hands(corr)
+                for hand_a, hand_b in sorted(_CROSS):
+                    if hand_a in corr and hand_b in corr:
+                        pair = corr.index(hand_a), corr.index(hand_b)
+                        break
+                else:
+                    raise ValueError(
+                        f"no XX/YY or RR/LL polarization pair in CORR_TYPE {corr}."
+                    )
                 sub = tb.query(
                     f"DATA_DESC_ID=={d} && ANTENNA1!=ANTENNA2{field_query}"
                 )
@@ -437,50 +444,43 @@ class ComplexVisData(eqx.Module):
         ----------
         scene : callable
             Maps the fitted values (a dict by site name) to a
-            [`SourceModel`][virgil.models.SourceModel], as ``PositionData.term``
-            takes ``orbit``. It must be a function of the values, not a model
-            instance: arrays held by the term would be compile-time constants.
+            [`SourceModel`][virgil.models.SourceModel]; a function of the
+            values, not a model instance.
         nuisance : CalibrationNuisance
             The calibration model; its sites are keys of the fit's priors.
         mask : (N,) bool, optional
             Points to use (default all); masked points change neither χ²
             nor the normalization.
         chunk_size : int, optional
-            Points are padded with zero weight to a multiple of this and
-            evaluated with ``jax.lax.map`` over chunks, bounding memory
-            (the transform is never ``vmap``-ed).
+            Points evaluated at a time, bounding memory.
         sigma : (n_ddid,) array, optional
             With ``sigmas="profile"``, fixed error scales instead of the
-            ``ŝ`` of this term's own points. Use it to score held-out data
-            at the ``ŝ`` of the training fit
-            (``fit(...).info["derived"]["cal.sigma"]``): a held-out term
-            that profiles its own ``ŝ`` is scored with errors tuned on the
-            test residuals, which is not a predictive score. (The
-            ``make_term(mask)`` protocol of
-            [`cross_validate`][virgil.crossval.cross_validate] re-profiles
-            each fold; use ``sigmas=True`` there.)
+            ``ŝ`` of this term's own points. Score held-out data at the
+            training fit's ``ŝ`` (``fit(...).info["derived"]["cal.sigma"]``):
+            profiling its own ``ŝ`` is not a predictive score.
         chi2 : {"auto", "direct", "toeplitz"}, optional
-            How [`fit`][virgil.fitting.fit] evaluates χ². ``"auto"`` uses the
-            dirty-beam form of
-            [`toeplitz`][virgil.radio.ComplexVisData.toeplitz] (same loss
-            and gradient, far cheaper per step) when it is exact: ``scene`` is
-            one fixed [`Image`][virgil.models.Image], the nuisance has no
-            ``antenna_gains``, fitted ``alpha`` or ``offsets``, the fit is
-            float64 and ``method="lbfgs"`` or ``"adam"``, and there are enough
-            points per pixel and ddid
-            ([`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
-            ``"toeplitz"`` requires it (``ValueError`` naming what fails;
-            fitted offsets then use ``offsets="spread"``); ``"direct"`` never
-            uses it. Each ``fit`` rebuilds the precompute: reuse
-            ``toeplitz(...)`` for repeated fits. ``numpyro_model`` and the fits of ``cross_validate`` stay direct.
+            How ``fit`` evaluates χ². ``"auto"`` uses the dirty-beam form of
+            [`toeplitz`][virgil.radio.ComplexVisData.toeplitz] when it is
+            exact (one fixed ``Image``, no ``antenna_gains``, fitted
+            ``alpha`` or ``offsets``, float64, ``method="lbfgs"`` or
+            ``"adam"``, enough points per pixel and ddid, see
+            [`set_ft_defaults`][virgil._geometry.set_ft_defaults]);
+            ``"toeplitz"`` requires it (``ValueError`` names what fails;
+            fitted offsets then use ``offsets="spread"``); ``"direct"``
+            never uses it. Each ``fit`` rebuilds the precompute: reuse
+            ``toeplitz(...)`` for repeated fits. ``numpyro_model`` and
+            ``cross_validate`` stay direct (it re-profiles each fold: use
+            ``sigmas=True``).
 
         Notes
         -----
-        ``fit`` passes the data to its jitted functions as arguments. In your
-        own jitted code pass the term as an argument too, with
-        ``eqx.filter_jit``; a ``jax.jit`` closure over it bakes the data in as
-        constants (see the radio interferometry page).
+        In your own jitted code pass the term as an argument with
+        ``eqx.filter_jit``; a ``jax.jit`` closure bakes the data in as
+        constants.
         """
+        # deliberate: points are padded with zero weight to a multiple of
+        # chunk_size and mapped with lax.map (never vmap-ed); a function (not a
+        # model instance) keeps arrays out of the jit as compile-time constants
         if isinstance(scene, SourceModel):
             raise TypeError(
                 "scene must be a function of the fitted values, e.g. "
@@ -570,7 +570,8 @@ class ComplexVisData(eqx.Module):
             model = scene
             scene = lambda values: model  # noqa: E731
         term = self.term(scene, nuisance, mask=mask, chunk_size=chunk_size)
-        r2 = term._r2(values)
+        re, im = term._evaluate(values)[:2]
+        r2 = term._flat(re) ** 2 + term._flat(im) ** 2
         mask_ = (
             onp.ones(len(self), dtype=bool)
             if mask is None
@@ -588,44 +589,36 @@ class ComplexVisData(eqx.Module):
     def sigma_scale(self, by="ddid"):
         """Model-free estimate of the error scale from time-adjacent samples.
 
-        Samples of one baseline, channel and scan (and ddid label) are sorted
-        by time and paired without overlap (1st with 2nd, 3rd with 4th, ...).
-        With ``σ² = s²/w`` for each of the real and imaginary parts, a pair
-        has ``Var(ΔRe) = s²(1/w_i + 1/w_j)``, so per group
+        Samples of one baseline, channel and scan (and ddid label) are paired
+        in time order without overlap; ``ŝ²`` is the mean over pairs of
+        ``ΔRe² / (1/w_i + 1/w_j)``, likewise for Im, and ``ŝ`` averages the two.
 
-        ``ŝ² = mean_pairs ΔRe² / (1/w_i + 1/w_j)``,
-
-        and the same for Im; the combined ``ŝ`` averages the two. The error
-        of ``ŝ²`` is the sample standard error of that mean (no Gaussian
-        assumption); ``se = se(ŝ²) / (2ŝ)``.
-
-        **This is an upper bound.** Any change of the sky (or of the gain and
-        phase) between the two integrations adds to ``|ΔV|²``, so ``ŝ`` is
-        biased high for rapidly varying data (long gaps, atmospheric phase)
-        and exact only if the signal is constant over a pair. Samples without
-        a partner in their run are not used. It needs the optional ``time``,
-        ``ant1``, ``ant2`` and ``scan`` fields (filled by
-        [`read_ms`][virgil.radio.ComplexVisData.read_ms]; with
-        ``stride > 1`` the rows read are no longer adjacent). Channels are
-        identified by their frequency.
+        **This is an upper bound.** Sky, gain or phase change within a pair
+        adds to ``|ΔV|²``, so ``ŝ`` is biased high for rapidly varying data
+        (long gaps, atmospheric phase), exact only if the signal is constant.
+        Samples without a partner are not used. Needs the ``time``, ``ant1``,
+        ``ant2`` and ``scan`` fields filled by
+        [`read_ms`][virgil.radio.ComplexVisData.read_ms]; with ``stride > 1``
+        the rows read are no longer adjacent.
 
         Parameters
         ----------
         by : {"ddid", "obs", None}
-            Grouping of the result; ``None`` pools everything.
+            Grouping of the result: per ``DATA_DESC_ID``, per observation id,
+            or pooled (``None``).
 
         Returns
         -------
         SigmaScale
-            Group labels (original ids) and, per group, the number of pairs
-            and ``s``, ``s_re``, ``s_im`` with standard errors. Its
-            ``lag_ratio`` compares the far-pair and adjacent-pair mean-square
-            differences: a ratio well above 1 means the sky varies and
-            adjacency matters (``ŝ`` is then the conservative estimate); a
-            ratio near 1 means either constant data or time order that does
-            not follow the data (for example a scrambled time column), and
-            ``ŝ`` should be checked.
+            Group labels, pair counts, and ``s``, ``s_re``, ``s_im`` with
+            standard errors. ``lag_ratio`` well above 1 means the sky varies
+            (``ŝ`` is conservative); near 1 means constant data or a time
+            order that does not follow the data (a scrambled time column):
+            check ``ŝ``.
         """
+        # deliberate: Var(ΔRe) = s²(1/w_i + 1/w_j) for σ² = s²/w; the error of
+        # ŝ² is the sample standard error of the mean (no Gaussian assumption),
+        # se(ŝ) = se(ŝ²) / (2ŝ); channels are identified by their frequency.
         missing = [
             n
             for n in ("time", "ant1", "ant2", "scan")
@@ -751,8 +744,18 @@ class ComplexVisData(eqx.Module):
             s = onp.asarray(nuisance._unpack(values)[3], dtype=onp.float64)
             w = w / s[onp.asarray(self.ddid)] ** 2
         if uvtaper is not None:
-            taper = _uv_taper(
-                onp.asarray(self.u), onp.asarray(self.v), uvtaper
+            bmaj, bmin, pa = (
+                (uvtaper, uvtaper, 0.0) if onp.ndim(uvtaper) == 0 else uvtaper
+            )
+            pa = onp.deg2rad(pa)
+            tu, tv = onp.asarray(self.u), onp.asarray(self.v)
+            along = tu * onp.sin(pa) + tv * onp.cos(pa)
+            across = tu * onp.cos(pa) - tv * onp.sin(pa)
+            a, b = bmaj * mas2rad, bmin * mas2rad
+            taper = onp.exp(
+                -(onp.pi**2)
+                * ((a * along) ** 2 + (b * across) ** 2)
+                / (4.0 * onp.log(2.0))
             )
         if weighting == "natural":
             return w if uvtaper is None else w * taper
@@ -787,6 +790,10 @@ class ComplexVisData(eqx.Module):
         The adjoint (type-1) NUFFT at the raw (u, v); taking the real part
         adds the Hermitian conjugates. ``values`` complex (N,).
         """
+        from nufftax import nufft2d1
+
+        from ._geometry import _FT_DEFAULTS
+
         npix = int(npix)
         c = 0.5 * (npix - 1)
         total = float(onp.sum(w))
@@ -811,7 +818,19 @@ class ComplexVisData(eqx.Module):
             a = w[sl] * values[sl]
             # exp(+i(t(c - col))) = exp(-i t m) exp(+i t (c - n//2)), m = col - n//2
             a = a * onp.exp(1j * (t_col + t_row) * (c - npix // 2))
-            image += _type1(t_col, t_row, a, npix)
+            wrap = lambda t: t - 2.0 * onp.pi * onp.round(  # noqa: E731
+                t / (2.0 * onp.pi)
+            )
+            # deliberate: nufftax type-1 at float64; the real part adds the Hermitian partners
+            f = nufft2d1(
+                np.asarray(wrap(t_col)),
+                np.asarray(wrap(t_row)),
+                np.asarray(a),
+                (npix, npix),
+                eps=_FT_DEFAULTS["eps_f64"],
+                isign=-1,
+            )
+            image += onp.asarray(np.real(f))
         return image / total
 
     def dirty_beam(
@@ -962,30 +981,25 @@ class ComplexVisData(eqx.Module):
                 if values is None or nuisance is None:
                     raise ValueError("a scene needs values and nuisance.")
                 scene = scene(values) if callable(scene) else scene
-                a = a - self._model_chunked(
-                    scene, values, nuisance, chunk_size
-                )
+                _no_antenna_gains(nuisance)
+                unpacked = nuisance._unpack(values)
+                model = onp.empty(len(self), dtype=onp.complex128)
+                for lo in range(0, len(self), int(chunk_size)):
+                    sl = slice(lo, lo + int(chunk_size))
+                    model[sl] = onp.asarray(
+                        _model_points(
+                            scene,
+                            unpacked,
+                            nuisance,
+                            self.u[sl],
+                            self.v[sl],
+                            self.freq[sl],
+                            self.ddid[sl],
+                            self.obs[sl],
+                        )
+                    )
+                a = a - model
         return self._adjoint(a, w, npix, pixel_scale_mas, chunk_size)
-
-    def _model_chunked(self, scene, values, nuisance, chunk_size):
-        _no_antenna_gains(nuisance)
-        unpacked = nuisance._unpack(values)
-        out = onp.empty(len(self), dtype=onp.complex128)
-        for lo in range(0, len(self), int(chunk_size)):
-            sl = slice(lo, lo + int(chunk_size))
-            out[sl] = onp.asarray(
-                _model_points(
-                    scene,
-                    unpacked,
-                    nuisance,
-                    self.u[sl],
-                    self.v[sl],
-                    self.freq[sl],
-                    self.ddid[sl],
-                    self.obs[sl],
-                )
-            )
-        return out
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1011,56 +1025,7 @@ class SigmaScale:
     lag_ratio: onp.ndarray
 
 
-def _type1(t_col, t_row, a, npix):
-    """``Σ_k a_k exp(-i (t_col m + t_row m'))`` as a real (npix, npix) image.
-
-    ``m = col - npix//2`` (and ``m'`` for rows) via nufftax's type-1
-    transform at float64; the result's real part is the sum with the
-    Hermitian partners added.
-    """
-    from nufftax import nufft2d1
-
-    from ._geometry import _FT_DEFAULTS
-
-    wrap = lambda t: t - 2.0 * onp.pi * onp.round(t / (2.0 * onp.pi))  # noqa: E731
-    f = nufft2d1(
-        np.asarray(wrap(t_col)),
-        np.asarray(wrap(t_row)),
-        np.asarray(a),
-        (npix, npix),
-        eps=_FT_DEFAULTS["eps_f64"],
-        isign=-1,
-    )
-    return onp.asarray(np.real(f))
-
-
-def _uv_taper(u, v, uvtaper):
-    """Fourier transform of the elliptical Gaussian ``uvtaper`` (see
-    ``dirty_image``) at ``u`` East and ``v`` North, in wavelengths."""
-    bmaj, bmin, pa = (
-        (uvtaper, uvtaper, 0.0) if onp.ndim(uvtaper) == 0 else uvtaper
-    )
-    pa = onp.deg2rad(pa)
-    along = u * onp.sin(pa) + v * onp.cos(pa)
-    across = u * onp.cos(pa) - v * onp.sin(pa)
-    a, b = bmaj * mas2rad, bmin * mas2rad
-    return onp.exp(
-        -(onp.pi**2)
-        * ((a * along) ** 2 + (b * across) ** 2)
-        / (4.0 * onp.log(2.0))
-    )
-
-
-def _parallel_hands(corr):
-    """Indices of the parallel-hand pair in ``CORR_TYPE`` (XX, YY or RR, LL)."""
-    for a, b in sorted(_CROSS):
-        if a in corr and b in corr:
-            return corr.index(a), corr.index(b)
-    raise ValueError(
-        f"no XX/YY or RR/LL polarization pair in CORR_TYPE {corr}."
-    )
-
-
+# deliberate: tests read one ddid's samples directly
 def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
     """The samples of one ddid's cross-correlation query, or None."""
     data = sub.getcol(column, 0, -1, stride)  # (ncorr, nchan, nrow)
@@ -1146,10 +1111,9 @@ _WIDTHS = ("gain_amp_width", "gain_phase_width")
 class CalibrationNuisance:
     """Per-observation calibration nuisances of a radio dataset.
 
-    Static configuration: which nuisances are fitted and their site names. The
-    sites (``prefix="cal"``) are keys of the fit's ``priors``; a function model
-    must accept them. The model, loss, conditioning and default priors are in
-    [Radio interferometry](../radio_interferometry.md#a-model-with-calibration-nuisances).
+    Static configuration: which nuisances are fitted. The sites
+    (``prefix="cal"``) are keys of the fit's ``priors``; a function model must
+    accept them. See [Radio interferometry](../radio_interferometry.md#a-model-with-calibration-nuisances).
 
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
@@ -1161,12 +1125,10 @@ class CalibrationNuisance:
     ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0 (or ``alpha``)
     ===============  ================  ==========================  =============
 
-    With ``fit_gain_widths``, scalar sites ``cal.gain_amp_width`` and
-    ``cal.gain_phase_width`` (``LogUniform(1e-3, 10)``) join the table.
-
-    The reference observation (``ref_obs``) has gain 1 and zero offset. The
-    offset bound ``θ_k`` is ``offset_beams`` beams of observation ``k``
-    (``fit(...).info["at_bound"]`` reports when it is hit).
+    ``fit_gain_widths`` adds scalar sites ``cal.gain_amp_width`` and
+    ``cal.gain_phase_width`` (``LogUniform(1e-3, 10)``). The reference
+    observation has gain 1 and zero offset; ``θ_k`` is ``offset_beams`` beams
+    of observation ``k`` (``fit(...).info["at_bound"]`` reports a hit).
 
     Parameters
     ----------
@@ -1174,19 +1136,18 @@ class CalibrationNuisance:
     ref_obs : int
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
-        Which nuisances are fitted (the flux always is). Gains and offsets
-        need more than one observation; a nuisance not fitted takes the value
-        in the table's last column. ``sigmas="profile"`` sets the error
-        scales at every evaluation instead of fitting them (see
+        Which nuisances are fitted (the flux always is); gains and offsets
+        need more than one observation; a nuisance not fitted takes the table's last column.
+        ``sigmas="profile"`` sets the error scales at every evaluation (see
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
-        for ``alpha`` fixes the spectral index at that value (a non-zero
-        integer is refused: ``alpha=1`` used to mean "fit").
+        ``alpha`` fixes the spectral index (a non-zero integer is refused:
+        ``alpha=1`` used to mean "fit").
     offset_beams : float, optional
         Half-width of the default offset prior, in beams; default 3.
         Provisional, as the module.
     antenna_gains : bool
         Marginalize a complex gain per antenna and solution interval ([antenna
-        gains](../radio_interferometry.md#antenna-based-gains)). Needs
+        gains](../radio_interferometry.md#antenna-based-gains)); needs
         ``time``, ``ant1``, ``ant2``; no least-squares form.
     solint : {"int", "scan"} or float
         Solution interval: an integration, a scan or seconds (within a scan).
@@ -1656,15 +1617,6 @@ class _RadioTerm(eqx.Module):
     def _profiled(self):
         return self.nuisance.sigmas == "profile"
 
-    def _residuals(self, values):
-        """(re, im) whitened residual chunks of shape (nchunk, chunk)."""
-        return self._evaluate(values)[:2]
-
-    def _residuals_and_sigma(self, values):
-        """``(re, im, sigma)``: whitened residual chunks and the ``s_d`` used
-        (fitted, or the profiled ``ŝ``)."""
-        return self._evaluate(values)[:3]
-
     def _evaluate(self, values):
         """``(re, im, sigma, prior, norm)``. With antenna gains the residuals
         are at the gain solution, ``prior`` holds the whitened solved
@@ -1689,9 +1641,35 @@ class _RadioTerm(eqx.Module):
             )
 
         if self.gain_index is not None:
-            return self._with_gains(
-                values, jax.lax.map(model, self.arrays), sigma
+            a = self.arrays
+            modelled = jax.lax.map(model, a)
+
+            def solve(sigma):
+                lam, phi, norm, sqrt_w, taus, _ = self._gain_solution(
+                    values, modelled, sigma
+                )
+                si, i, j = a["interval"], a["a1"], a["a2"]
+                gain = np.exp(
+                    lam[si, i] + lam[si, j] + 1j * (phi[si, i] - phi[si, j])
+                )
+                return (
+                    lam,
+                    phi,
+                    norm,
+                    taus,
+                    (a["vis"] - gain * modelled) * sqrt_w,
+                )
+
+            if self._profiled and self.sigma_fixed is None:
+                r = solve(sigma)[-1]
+                sigma = self._profile_sigma(np.real(r), np.imag(r))
+            elif self._profiled:
+                sigma = self.sigma_fixed
+            lam, phi, norm, (tau_a, tau_p), r = solve(sigma)
+            prior = np.concatenate(
+                [np.ravel(lam) / tau_a, np.ravel(phi) / tau_p]
             )
+            return np.real(r), np.imag(r), sigma, prior, norm
 
         def chunk(a):
             r = (a["vis"] - model(a)) * a["sqrt_w"] / sigma[a["ddid"]]
@@ -1729,28 +1707,6 @@ class _RadioTerm(eqx.Module):
         )
         return lam, phi, norm, sqrt_w, (tau_a, tau_p), step
 
-    def _with_gains(self, values, model, sigma):
-        a = self.arrays
-
-        def solve(sigma):
-            lam, phi, norm, sqrt_w, taus, _ = self._gain_solution(
-                values, model, sigma
-            )
-            si, i, j = a["interval"], a["a1"], a["a2"]
-            gain = np.exp(
-                lam[si, i] + lam[si, j] + 1j * (phi[si, i] - phi[si, j])
-            )
-            return lam, phi, norm, taus, (a["vis"] - gain * model) * sqrt_w
-
-        if self._profiled and self.sigma_fixed is None:
-            r = solve(sigma)[-1]
-            sigma = self._profile_sigma(np.real(r), np.imag(r))
-        elif self._profiled:
-            sigma = self.sigma_fixed
-        lam, phi, norm, (tau_a, tau_p), r = solve(sigma)
-        prior = np.concatenate([np.ravel(lam) / tau_a, np.ravel(phi) / tau_p])
-        return np.real(r), np.imag(r), sigma, prior, norm
-
     def gains(self, values):
         """Solved antenna gains ``exp(λ̂ + iφ̂)``, shape ``(n_interval, n_ant)``,
         at the point the likelihood is evaluated."""
@@ -1776,7 +1732,7 @@ class _RadioTerm(eqx.Module):
     def sigma_hat(self, values):
         """The error scales ``s_d`` at ``values``: ``ŝ`` if profiled, else the
         fitted ``cal.sigma`` (ones if not fitted)."""
-        return self._residuals_and_sigma(values)[2]
+        return self._evaluate(values)[2]
 
     def derived(self, values):
         """Quantities of the fit that are not sites: the profiled ``ŝ``."""
@@ -1816,15 +1772,6 @@ class _RadioTerm(eqx.Module):
         re, im, _, prior, _ = self._evaluate(values)
         return np.concatenate([self._flat(re), self._flat(im), prior])
 
-    def _r2(self, values):
-        """Squared whitened residual (Re² + Im²) of each point."""
-        re, im = self._residuals(values)
-        return self._flat(re) ** 2 + self._flat(im) ** 2
-
-    def _log_norm_of(self, sigma):
-        a = self.arrays
-        return 2.0 * np.sum(a["m"] * np.log(sigma[a["ddid"]]))
-
     def log_norm(self, values):
         """``Σ_k m_k 2 ln s_d(k)``, which ``fit`` adds to ½χ²."""
         return self.residuals_and_log_norm(values)[1]
@@ -1834,7 +1781,8 @@ class _RadioTerm(eqx.Module):
         model (``fit`` uses it, so that profiling ``ŝ`` costs no second pass)."""
         re, im, sigma, prior, norm = self._evaluate(values)
         r = np.concatenate([self._flat(re), self._flat(im), prior])
-        return r, self._log_norm_of(sigma) + norm
+        a = self.arrays
+        return r, 2.0 * np.sum(a["m"] * np.log(sigma[a["ddid"]])) + norm
 
     def loglike(self, values):
         """Normalized Gaussian log density of the unmasked points."""

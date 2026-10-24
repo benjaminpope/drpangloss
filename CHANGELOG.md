@@ -9,6 +9,9 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- Radio code shape (virgil#535): thirteen single-use private helpers inlined in `radio.py` and `radio_toeplitz.py`,
+  the long docstrings of `term`, `sigma_scale`, `CalibrationNuisance` and `clean` trimmed to the calling contract; no API or
+  behaviour change.
 - Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
   and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
   of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's
