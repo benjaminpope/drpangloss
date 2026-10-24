@@ -5,7 +5,13 @@ import pytest
 
 from virgil._utils import mas2rad
 from virgil.radio import ComplexVisData
-from virgil.radio_clean import _auto_mask, _gaussian, clean, fit_beam
+from virgil.radio_clean import (
+    _auto_mask,
+    _gaussian,
+    _minor_cycle,
+    clean,
+    fit_beam,
+)
 
 S = 40.0  # mas per pixel
 N = 97
@@ -257,6 +263,8 @@ def test_clean_converges_when_the_psf_reaches_beyond_half_the_image():
     peaks = [h["peak_residual"] for h in res.history]
     assert res.stop == "threshold"
     assert all(b < a for a, b in zip(peaks, peaks[1:]))
+    # compact sources, so the total flux is constrained despite the missing
+    # short spacings
     assert res.model.sum() == pytest.approx(1.0, abs=0.01)
 
 
@@ -275,3 +283,30 @@ def test_the_returned_psf_and_restoring_beam_stay_image_sized():
     res = clean(data, 65, 4.0, niter=50, threshold=1e-3)
     assert res.psf.shape == res.residual.shape == (65, 65)
     assert res.beam == fit_beam(res.psf, 4.0)
+
+
+def test_one_component_clears_the_whole_residual_with_the_full_window():
+    # a corner source: the PSF window must reach the opposite corner
+    n, c = 65, 32
+    data = _sparse_track_data(n)
+    w = data._imaging_weights(
+        "natural", 0.5, 1 / (n * 4.0 * mas2rad), None, None, uvtaper=None
+    )
+    ones = onp.ones(len(data), complex)
+    phase = (data.u + data.v) * 25 * 4.0 * mas2rad
+    resid = data._adjoint(onp.exp(2j * onp.pi * phase), w, n, 4.0, 10**6)
+    full = data._adjoint(ones, w, 2 * n - 1, 4.0, 10**6)
+    kw = dict(
+        scales=[0],
+        mask=onp.ones((n, n), bool),
+        gain=1.0,
+        niter=5,
+        threshold=1e-4,
+        bias=0.6,
+        patch=256,
+    )
+    _, used = _minor_cycle(resid, full, **kw)
+    assert used == 1
+    # the image-sized PSF leaves the far sidelobes behind (virgil#551)
+    _, used = _minor_cycle(resid, full[c : c + n, c : c + n], **kw)
+    assert used > 1

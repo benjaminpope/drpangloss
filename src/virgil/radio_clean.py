@@ -209,9 +209,9 @@ def _minor_cycle(
     H_ss`` is added, and the cross-convolved PSF is subtracted from every
     smoothed residual in a window of half-width ``patch`` (Clark's
     restriction). A single scale 0 is Högbom's CLEAN. ``psf`` is the dirty
-    beam out to the farthest pixel a window can reach (at most the whole
-    image from any component, so larger than the image grid). The cycle also ends if its peak rises 10 per cent above
-    its running minimum (divergence). Returns the components
+    beam out to the farthest lag a window uses, so larger than the image
+    grid. The cycle also ends if a scale's peak rises 10 per cent above its
+    running minimum (divergence). Returns the components
     ``(n_scales, n, n)`` and the iteration count.
     """
     scales = [float(s) for s in scales]
@@ -271,7 +271,7 @@ def _minor_cycle(
 
     tmax = tile_max(big)
     comps = onp.zeros((nsc, ny, nx))
-    done, lowest = 0, onp.inf
+    done, lowest = 0, onp.full(nsc, onp.inf)
     for done in range(1, niter + 1):
         s, ty, tx = onp.unravel_index(onp.argmax(tmax), tmax.shape)
         blk = big[s, ty * tile : (ty + 1) * tile, tx * tile : (tx + 1) * tile]
@@ -279,10 +279,10 @@ def _minor_cycle(
         y, x = ty * tile + iy, tx * tile + ix
         amp = big[s, y, x] / (norm[s] * hdiag[s])
         peak = abs(amp * resp[s])
-        if peak < threshold or peak > _MINOR_RISE * lowest:
+        if peak < threshold or peak > _MINOR_RISE * lowest[s]:
             done -= 1
             break
-        lowest = min(lowest, peak)
+        lowest[s] = min(lowest[s], peak)
         a = gain * amp
         comps[s, y, x] += a
         for t in range(nsc):
@@ -336,7 +336,8 @@ class RadioCleanResult:
         ``"threshold"``, ``"nsigma"``, ``"niter"``, ``"time_limit"`` or
         ``"no_progress"`` (no component above the cycle threshold) or
         ``"diverged"`` (the peak residual grew by 50 per cent over a major
-        cycle, as in ``tclean``).
+        cycle, as in ``tclean``; ``model`` and ``residual`` are then those
+        of the cycle that diverged).
     history : list of dict
         One entry per major cycle: iterations so far, peak residual (Jy/beam),
         rms (Jy/beam), model flux (Jy), wall time (s).
@@ -477,8 +478,7 @@ def clean(
     ``tclean``; see the [guide](../radio_clean.md) for the algorithm and the
     WSClean equivalents.
 
-    Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008); the
-    divergence stops follow CASA ``tclean``'s iteration control (CASA Docs).
+    Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008), CASA.
 
     Unlike [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
     visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
@@ -509,9 +509,8 @@ def clean(
     smallscalebias : float
         Preference for small scales, 0 to 1.
     psfpatch : int
-        Half-width in pixels of the PSF window subtracted per iteration, up
-        to ``npix - 1`` (the PSF is computed that far out, as in CASA, not on
-        the image grid alone).
+        Half-width in pixels of the PSF window subtracted per iteration, at
+        most ``npix - 1``.
     mask : array of bool, optional
         Where to clean; default the whole image.
     usemask : {"user", "auto-multithresh"}, sidelobethreshold, noisethreshold,

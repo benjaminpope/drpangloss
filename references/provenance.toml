@@ -642,7 +642,7 @@ url = "https://casadocs.readthedocs.io/en/stable/api/tt/casatasks.imaging.tclean
 verified = false
 verified_via = "none"
 used_in = ["virgil.radio_clean:clean", "virgil.radio_clean:_minor_cycle"]
-note = "a minor cycle stops at a 10 per cent rise of the peak residual above its minimum; the run stops at a 50 per cent rise over one major cycle"
+note = "CASA Docs, tclean iteration control: divergence is a 10 per cent rise of the peak residual above the minimum so far during minor-cycle iterations; the run also stops at a rise of 50 per cent or more over one major cycle (read from the docs 2026-10-24; stop codes not otherwise reproduced)"
 role = "compared"
 
 [ref.schwab1984]
