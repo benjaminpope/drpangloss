@@ -74,7 +74,9 @@ class _Axis(NamedTuple):
         return self.step > self.wanted * (1 + _STEP_TOLERANCE)
 
 
-def _global_nsigma(local_nsigma, n_trials):
+def _global_nsigma(
+    local_nsigma, n_trials
+):  # deliberate: tests pin the look-elsewhere values
     """Look-elsewhere (Sidak) significance of ``local_nsigma`` over
     ``n_trials`` (NaN if not finite)."""
     from scipy.special import ndtri_exp
@@ -94,13 +96,12 @@ class BinaryPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Stages: ``load``, ``overview``, ``search`` (a point-companion grid with
+    Stages: ``load``, ``overview``, ``search`` (point-companion grid,
     [`detection_statistics`][virgil.detection.detection_statistics]),
     ``limits`` ([`absil_limits`][virgil.limits.absil_limits]), ``fit``,
-    ``posterior`` (NUTS) and ``quicklook``. The fit and the posterior share
-    one prior. ``run()`` returns a ``Result`` (``res.summary["companion"]``
-    has ``sep_mas`` and ``pa_deg`` for either template). All settings, with
-    defaults:
+    ``posterior`` (NUTS, same prior as the fit) and ``quicklook``.
+    ``res.summary["companion"]`` has ``sep_mas`` and ``pa_deg`` for either
+    template. Settings:
     [pipeline settings](../pipeline.md#binarypipeline-settings).
 
     Parameters
@@ -117,8 +118,9 @@ class BinaryPipeline(_Pipeline):
     **settings
         Overrides of ``BinaryPipeline.defaults()``. The most used: ``sigma``
         (significance of the contrast limits, 3.0), ``max_sep_mas`` (search
-        half-width in mas; default the coarsest λ/B, capped on lattice coverage), ``grid_step_mas``, ``flux_range``,
-        ``error_scale`` (``"quoted"`` or ``"fit"``). Priors and errors:
+        half-width in mas; default the coarsest λ/B, capped on lattice
+        coverage), ``grid_step_mas``, ``flux_range``, ``error_scale``
+        (``"quoted"`` or ``"fit"``). Priors and errors:
         [conventions](../conventions.md).
 
     Examples
@@ -334,11 +336,25 @@ def _search(p):
     maps = _search_maps(data, grid, s["batch_size"])
     _write_grids(p.output, grid, search=maps)
     best = {"dra": float(detection["dra"]), "ddec": float(detection["ddec"])}
-    _plot_search(p.output, grid, maps, best)
+    from ..plotting import plot_grid_map
+
+    fig, _ = plot_grid_map(
+        maps["delta_chi2"],
+        grid,
+        kind="loglike",
+        label="Δχ²",
+        title="Δχ² (point companion)",
+        best=best,
+    )
+    _save(fig, p.output / "plots" / "search_delta_chi2.png")
+    fig, _ = plot_grid_map(maps["snr"], grid, kind="snr", best=best)
+    _save(fig, p.output / "plots" / "search_snr.png")
     return _search_report(data, grid, axis, detection)
 
 
-def _refined_flux(data, grid, batch_size):
+def _refined_flux(
+    data, grid, batch_size
+):  # deliberate: tests call it directly
     """``(flux, loglike)`` of the point companion refined at every position."""
     from .._grid import (
         batch_size_or_default,
@@ -416,23 +432,7 @@ def _write_grids(output, grid, **groups):
     )
 
 
-def _plot_search(output, grid, maps, best):
-    from ..plotting import plot_grid_map
-
-    fig, _ = plot_grid_map(
-        maps["delta_chi2"],
-        grid,
-        kind="loglike",
-        label="Δχ²",
-        title="Δχ² (point companion)",
-        best=best,
-    )
-    _save(fig, output / "plots" / "search_delta_chi2.png")
-    fig, _ = plot_grid_map(maps["snr"], grid, kind="snr", best=best)
-    _save(fig, output / "plots" / "search_snr.png")
-
-
-def _peak_index(grid, best):
+def _peak_index(grid, best):  # deliberate: tests call it directly
     """Grid index of ``best`` on each axis (the flux is matched in log)."""
     index = []
     for key in _AXIS_ORDER:
@@ -478,12 +478,30 @@ def _search_report(data, grid, axis, detection):
 
 
 def _limits(p):
-    from ..limits import radial_profile
+    from ..limits import (
+        absil_limits,
+        flux_to_delta_mag,
+        radial_profile,
+    )
+    from ..models import BinaryModelCartesian
+    from ..plotting import plot_contrast_curve, plot_grid_map
 
     s = p.settings
     grid, max_sep = p._grid(), p._grid_axis().max_sep
-    limit = _limit_map(p, grid)
+    limit = onp.asarray(
+        absil_limits(
+            BinaryModelCartesian,
+            p.processed,
+            grid,
+            s["sigma"],
+            batch_size=s["batch_size"],
+        )
+    )
     dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
+    # Inside the resolution limit separation and flux are degenerate: NaN.
+    r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
+    resolution = _geometry(p.processed)["resolution_mas"]
+    limit = onp.where(r < resolution, onp.nan, limit)
     profile = radial_profile(
         limit, dra, ddec, r_max=max_sep, bins=s["limit_bins"]
     )
@@ -495,54 +513,16 @@ def _limits(p):
         search=_io.read_h5(p.output / "grids.h5", "search"),
         limits={"limit_flux": (limit, meta)},
     )
-    _plot_limits(p, grid, limit, profile)
-    return _limits_report(s["sigma"], profile)
-
-
-def _limit_map(p, grid):
-    """Absil limits on the flux over the grid, NaN inside the resolution."""
-    from ..limits import absil_limits
-    from ..models import BinaryModelCartesian
-
-    s = p.settings
-    limit = onp.asarray(
-        absil_limits(
-            BinaryModelCartesian,
-            p.processed,
-            grid,
-            s["sigma"],
-            batch_size=s["batch_size"],
-        )
-    )
-    r = onp.hypot(
-        *onp.meshgrid(
-            onp.asarray(grid["dra"]), onp.asarray(grid["ddec"]), indexing="ij"
-        )
-    )
-    # Inside the resolution limit separation and flux are degenerate.
-    resolution = _geometry(p.processed)["resolution_mas"]
-    return onp.where(r < resolution, onp.nan, limit)
-
-
-def _plot_limits(p, grid, limit, profile):
-    from ..plotting import plot_contrast_curve, plot_grid_map
-
-    sigma = p.settings["sigma"]
     fig, _ = plot_grid_map(
-        limit, grid, kind="limit", units="delta_mag", sigma=sigma
+        limit, grid, kind="limit", units="delta_mag", sigma=s["sigma"]
     )
     _save(fig, p.output / "plots" / "limits_map.png")
-    fig, _ = plot_contrast_curve(profile, sigma=sigma)
+    fig, _ = plot_contrast_curve(profile, sigma=s["sigma"])
     _save(fig, p.output / "plots" / "limits_contrast_curve.png")
-
-
-def _limits_report(sigma, profile):
-    from ..limits import flux_to_delta_mag
-
     median = onp.asarray(profile["median"], dtype=float)
     delta_mag = onp.asarray(flux_to_delta_mag(median), dtype=float)
     return {
-        "sigma": sigma,
+        "sigma": s["sigma"],
         "method": "absil",
         "r_mas": profile["r"],
         "median_flux": median,
@@ -568,7 +548,11 @@ def _fit(p):
     angular = _is_angular(p)
     template, init = _fit_start(p, p._report("search"), priors, angular)
     result = fit(template, priors, data, noise=p._noise(), init=init)
-    values = _fitted_values(result, angular)
+    values = {k: onp.asarray(v) for k, v in result.values.items()}
+    if angular:  # the angular model's own sep, pa
+        values.update(
+            sep=onp.asarray(result.model.sep), pa=onp.asarray(result.model.pa)
+        )
     _require_finite(values, result.info)
     reported = ["sep", "pa", "flux"] if angular else list(priors)
     best = p.output / "models" / "best"
@@ -580,10 +564,30 @@ def _fit(p):
         values,
         list(priors),
     )
-    return _fit_report(data, result, values, reported, priors)
+    chi2, resid = _chi2(result.model, data)
+    # The periodic penalty terms of correlated closure phases are not
+    # meant to be normal: test only the independent whitened residuals.
+    resid = resid[: int(data.n_independent)]
+    skew, kurt = _moments(resid)
+    scales = _scales_of(values)
+    return {
+        "params": {k: float(values[k]) for k in reported},
+        "converged": result.info.get("converged"),
+        "chi2": chi2,
+        "n_independent": int(data.n_independent),
+        "chi2_reduced": chi2 / data.n_independent,
+        "error_scales": scales or None,
+        "residual_skew": skew,
+        "residual_excess_kurtosis": kurt,
+        "n_residuals": int(resid.size),
+        "at_bound": list(result.info.get("at_bound", []) or []),
+        "priors": {k: _prior_repr(v) for k, v in priors.items()},
+    }
 
 
-def _fit_start(p, search, priors, angular):
+def _fit_start(
+    p, search, priors, angular
+):  # deliberate: tests call it with a stub pipeline
     """The template to fit and its start (the search's best point)."""
     lo, hi = p.settings["flux_range"]
     start = {
@@ -610,7 +614,7 @@ def _fit_start(p, search, priors, angular):
     return template.set(list(priors), list(start.values())), None
 
 
-def _require_finite(values, info):
+def _require_finite(values, info):  # deliberate: tests call it directly
     """Raise, at the fit, if it returned a NaN or infinite parameter."""
     bad = [k for k, v in values.items() if not onp.all(onp.isfinite(v))]
     if bad:
@@ -619,37 +623,6 @@ def _require_finite(values, info):
             f"{info.get('stop')!r}, loss {info.get('loss')}); check the "
             "start, the priors and the data."
         )
-
-
-def _fitted_values(result, angular):
-    """The fitted parameters, with the angular model's own ``sep``, ``pa``."""
-    values = {k: onp.asarray(v) for k, v in result.values.items()}
-    if angular:
-        model = result.model
-        values.update(sep=onp.asarray(model.sep), pa=onp.asarray(model.pa))
-    return values
-
-
-def _fit_report(data, result, values, reported, priors):
-    chi2, resid = _chi2(result.model, data)
-    # The periodic penalty terms of correlated closure phases are not
-    # meant to be normal: test only the independent whitened residuals.
-    resid = resid[: int(data.n_independent)]
-    skew, kurt = _moments(resid)
-    scales = _scales_of(values)
-    return {
-        "params": {k: float(values[k]) for k in reported},
-        "converged": result.info.get("converged"),
-        "chi2": chi2,
-        "n_independent": int(data.n_independent),
-        "chi2_reduced": chi2 / data.n_independent,
-        "error_scales": scales or None,
-        "residual_skew": skew,
-        "residual_excess_kurtosis": kurt,
-        "n_residuals": int(resid.size),
-        "at_bound": list(result.info.get("at_bound", []) or []),
-        "priors": {k: _prior_repr(v) for k, v in priors.items()},
-    }
 
 
 # --- posterior ---
@@ -661,7 +634,19 @@ def _posterior(p):
     reported = list(fit_report["params"])
     angular = _is_angular(p)
 
-    sampled, stats = _run_nuts(p, priors, angular)
+    from ..likelihood import numpyro_model
+
+    best = p.output / "models" / "best"
+    model = p._sampled_model() if angular else _io.load_model(best)
+    posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
+    mcmc = _run_chains(
+        posterior,
+        p.settings,
+        _load_start(best, priors),
+        dense_mass=False,
+        priors=priors,
+    )
+    sampled, stats = _draws(mcmc)  # one start per chain, from the fit
     samples = dict(sampled)
     if angular:
         # The model's own parameters, derived from the sampled offsets.
@@ -700,23 +685,6 @@ def _posterior(p):
         **_sampler_report(p.settings, [health]),
         "prior_bound_fraction": _prior_bounds(priors, samples),
     }
-
-
-def _run_nuts(p, priors, angular):
-    """NUTS from the fit, one start per chain: ``(samples, stats)``."""
-    from ..likelihood import numpyro_model
-
-    best = p.output / "models" / "best"
-    model = p._sampled_model() if angular else _io.load_model(best)
-    posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
-    mcmc = _run_chains(
-        posterior,
-        p.settings,
-        _load_start(best, priors),
-        dense_mass=False,
-        priors=priors,
-    )
-    return _draws(mcmc)
 
 
 # === SUMMARY AND CHECKS ===
@@ -768,42 +736,6 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _companion(params, source):
-    """Companion position and flux (median and 1σ) from fit or posterior."""
-    from ..limits import flux_to_contrast, flux_to_delta_mag
-    from ..models import BinaryModelAngular
-
-    def q(name):
-        x = params[name]
-        if isinstance(x, dict):
-            return x["median"], 0.5 * (x["q84"] - x["q16"])
-        return x, None
-
-    flux, flux_err = q("flux")
-    out = {"source": source}
-    if "sep" in params:
-        (sep, sep_err), (pa, pa_err) = q("sep"), q("pa")
-        cartesian = BinaryModelAngular(sep, pa, flux).to_cartesian()
-        dra, ddec = float(cartesian.dra), float(cartesian.ddec)
-    else:
-        (dra, _), (ddec, _) = q("dra"), q("ddec")
-        sep, pa = separation_pa(dra, ddec)
-        sep, pa, sep_err, pa_err = float(sep), float(pa), None, None
-    out.update(
-        sep_mas=sep,
-        sep_err_mas=sep_err,
-        pa_deg=pa,
-        pa_err_deg=pa_err,
-        dra_mas=dra,
-        ddec_mas=ddec,
-        flux=flux,
-        flux_err=flux_err,
-        contrast=float(flux_to_contrast(flux)),
-        delta_mag=float(flux_to_delta_mag(flux)),
-    )
-    return out
-
-
 def _chi2_checks(search, fit):
     """The χ²/N check: of the best-fit binary, else of the star alone."""
     null = search["chi2_null"] / search["n_independent"] if search else None
@@ -841,6 +773,9 @@ def _fit_checks(fit, companion, load):
 
 def _summarize(settings, reports):
     """``(sections, checks)`` of the summary from the stage reports so far."""
+    from ..limits import flux_to_contrast, flux_to_delta_mag
+    from ..models import BinaryModelAngular
+
     load, search, limits, fit, post = (
         reports.get(k)
         for k in ("load", "search", "limits", "fit", "posterior")
@@ -877,9 +812,36 @@ def _summarize(settings, reports):
     if fit:
         sections["fit"] = _pick(fit, _FIT_KEYS)
         source = post["params"] if post else fit["params"]
-        sections["companion"] = _companion(
-            source, "posterior" if post else "fit"
+
+        def q(name):  # (median, 1σ) of a posterior entry, or (value, None)
+            x = source[name]
+            if isinstance(x, dict):
+                return x["median"], 0.5 * (x["q84"] - x["q16"])
+            return x, None
+
+        flux, flux_err = q("flux")
+        companion = {"source": "posterior" if post else "fit"}
+        if "sep" in source:
+            (sep, sep_err), (pa, pa_err) = q("sep"), q("pa")
+            cartesian = BinaryModelAngular(sep, pa, flux).to_cartesian()
+            dra, ddec = float(cartesian.dra), float(cartesian.ddec)
+        else:
+            (dra, _), (ddec, _) = q("dra"), q("ddec")
+            sep, pa = separation_pa(dra, ddec)
+            sep, pa, sep_err, pa_err = float(sep), float(pa), None, None
+        companion.update(
+            sep_mas=sep,
+            sep_err_mas=sep_err,
+            pa_deg=pa,
+            pa_err_deg=pa_err,
+            dra_mas=dra,
+            ddec_mas=ddec,
+            flux=flux,
+            flux_err=flux_err,
+            contrast=float(flux_to_contrast(flux)),
+            delta_mag=float(flux_to_delta_mag(flux)),
         )
+        sections["companion"] = companion
         checks += _fit_checks(fit, sections["companion"], load)
     if post:
         sections["posterior"] = _pick(post, _POSTERIOR_KEYS)

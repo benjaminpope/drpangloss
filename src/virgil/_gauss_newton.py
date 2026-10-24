@@ -70,20 +70,17 @@ def _held(z, g, lower, upper):
     return at_lower | at_upper
 
 
-def _marquardt(F, free):
-    """Marquardt's scaling M (the diagonal), floored, on the free coordinates."""
-    d = np.diag(F)
-    biggest = np.max(np.where(free, d, 0.0))
-    tiny = np.finfo(F.dtype).tiny
-    return np.maximum(np.maximum(d, _MARQUARDT_FLOOR * biggest), tiny)
-
-
 def _solve_free(F, g, free, lam):
     """δ of ``(F + λM) δ = -g`` on the free coordinates, 0 on held ones.
 
     NaN when the system is not positive definite (Cholesky does not raise).
     """
-    A = F + lam * np.diag(_marquardt(F, free))
+    # Marquardt's scaling M (the diagonal), floored, on the free coordinates.
+    d = np.diag(F)
+    biggest = np.max(np.where(free, d, 0.0))
+    tiny = np.finfo(F.dtype).tiny
+    scaling = np.maximum(np.maximum(d, _MARQUARDT_FLOOR * biggest), tiny)
+    A = F + lam * np.diag(scaling)
     both = free[:, None] & free[None, :]
     A = np.where(both, A, 0.0) + np.diag(np.where(free, 0.0, 1.0))
     rhs = np.where(free, -g, 0.0)
@@ -119,6 +116,7 @@ def init(problem, z0, lower, upper):
     )
 
 
+# deliberate: lax.while_loop body, jitted with its solve
 def _advance(problem, state, lower, upper, gtol, dtol, limit):
     z, g, F = state.z, state.grad, state.curvature
     free = ~_held(z, g, lower, upper)

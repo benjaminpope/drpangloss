@@ -925,7 +925,10 @@ def _two_instruments(n=12, jitter=0.4, seed=5):
 def _dense_marginal(rvs, model, s, mean, sd):
     from scipy.stats import multivariate_normal
 
-    A = onp.asarray(rvs._design())
+    A = (
+        onp.asarray(rvs.inst)[:, None]
+        == onp.arange(len(rvs.instruments))[None, :]
+    ).astype(float)
     C = onp.diag(onp.asarray(rvs.d_rv) ** 2 + s**2)
     cov = C + A @ onp.diag(sd**2) @ A.T
     return multivariate_normal(model + A @ mean, cov).logpdf(
@@ -1215,13 +1218,11 @@ def test_position_angle_at_t_ref_round_trips_through_dt_peri():
 
 
 def _mean_anomaly(theta, el):
-    from virgil.orbits import _mean_anomaly_at_ref
-
-    return onp.asarray(
-        _mean_anomaly_at_ref(
-            theta, el["ecc"], el["inc"], el["omega"], el["Omega"]
-        )
+    """M at ``t_ref`` from the orbit with position angle ``theta`` there."""
+    orbit = KeplerOrbit.from_position_angle(
+        **{**el, "theta": theta, "a_mas": 1.0, "period": 1.0}
     )
+    return -2.0 * onp.pi * onp.asarray(orbit.dt_peri)
 
 
 def test_position_angle_jacobian_matches_finite_differences():

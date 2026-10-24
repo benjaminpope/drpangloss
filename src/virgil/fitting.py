@@ -105,32 +105,6 @@ class GaussNewtonMass(dict):
     condition = None
 
 
-def _prior_residuals(path, distribution, value):
-    """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
-
-    ``None`` means the prior is flat on its support or in the coordinate ``fit``
-    optimizes it in, so it adds nothing to a least-squares objective.
-    """
-    import numpyro.distributions as dist
-
-    if _flat_coordinate(distribution) is not None:
-        return None
-    distribution = _base(distribution)
-    if is_angle_vector(distribution):
-        return distribution.residuals(value)  # ``value`` is the vector
-    if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
-        return None
-    if isinstance(distribution, dist.Normal):
-        return np.ravel((value - distribution.loc) / distribution.scale)
-    raise NoLeastSquaresForm(
-        f"The {type(distribution).__name__} prior on {path!r} has no "
-        "least-squares form; use Normal, Uniform, ImproperUniform or "
-        "LogUniform or AngleVector priors (or one with a flat coordinate, "
-        "such as an isotropic inclination; an AngleVector takes von Mises "
-        "priors on angles), or fit with method='lbfgs' or 'adam'."
-    )
-
-
 def _traced(prior):
     """``prior`` with its Python-number parameters as JAX arrays, so that a new prior
     bound does not recompile the jitted solvers (equinox treats numbers as static).
@@ -142,38 +116,6 @@ def _traced(prior):
         return leaf
 
     return jax.tree.map(to_array, prior)
-
-
-def _warn_if_field_hyperparameter(model, path):
-    """Warn when a Gaussian process's sigma or length is fitted by MAP."""
-    parent, _, name = path.rpartition(".")
-    hyper = (
-        "sigma",
-        "length_mas",
-        "ell",
-        "ell_r",
-        "ell_theta",
-        "length_r",
-        "length_theta",
-    )
-    if name in hyper and parent:
-        if isinstance(
-            model.get(parent),
-            (
-                GaussianField,
-                RadialGP,
-                RadialGPFunction,
-                MultipoleKernel,
-                MultipoleField,
-            ),
-        ):
-            warnings.warn(
-                f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
-                "field are biased at the MAP (towards a flat field). Fix "
-                "them, choose them from the evidence, or sample them.",
-                UserWarning,
-                stacklevel=external_stacklevel(),
-            )
 
 
 def _log_jacobian(bijection, z):
@@ -230,7 +172,38 @@ class _Objective(eqx.Module):
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
-                _warn_if_field_hyperparameter(model, path)
+                parent, _, name = path.rpartition(".")
+                hyper = (
+                    "sigma",
+                    "length_mas",
+                    "ell",
+                    "ell_r",
+                    "ell_theta",
+                    "length_r",
+                    "length_theta",
+                )
+                if (
+                    name in hyper
+                    and parent
+                    and isinstance(
+                        model.get(parent),
+                        (
+                            GaussianField,
+                            RadialGP,
+                            RadialGPFunction,
+                            MultipoleKernel,
+                            MultipoleField,
+                        ),
+                    )
+                ):
+                    warnings.warn(
+                        f"Fitting {path!r} by MAP: the hyperparameters of a "
+                        "Gaussian field are biased at the MAP (towards a flat "
+                        "field). Fix them, choose them from the evidence, or "
+                        "sample them.",
+                        UserWarning,
+                        stacklevel=external_stacklevel(),
+                    )
             if is_flux_param(path):
                 _check_positive_flux_prior(path, prior)
 
@@ -348,10 +321,6 @@ class _Objective(eqx.Module):
             self.model, self.paths, [values[p] for p in self.paths]
         )
 
-    @property
-    def _has_term_norms(self):
-        return any(getattr(t, "has_log_norm", False) for t in self.likelihoods)
-
     def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
 
@@ -369,11 +338,14 @@ class _Objective(eqx.Module):
             for i, (m, d) in enumerate(zip(models, self.data))
         ]
 
-    def _check_least_squares(self, term_norms=True):
-        """Raise :class:`NoLeastSquaresForm` if the objective has no residual
-        vector: fitted error terms, data with gains, regularizers without
-        ``residuals`` and, if ``term_norms``, likelihood terms with a
-        ``log_norm``."""
+    def residuals(self, z):
+        """Residual vector whose half sum of squares is ``loss(z)`` + const.
+
+        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
+        least-squares form (use L-BFGS or Adam).
+        """
+        import numpyro.distributions as dist
+
         if self.noise:
             raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
@@ -392,7 +364,7 @@ class _Objective(eqx.Module):
                 "A likelihood term with a scalar χ² (no residual vector) has "
                 "no least-squares form; fit with method='lbfgs' or 'adam'."
             )
-        if term_norms and self._has_term_norms:
+        if any(getattr(t, "has_log_norm", False) for t in self.likelihoods):
             raise NoLeastSquaresForm(
                 "Likelihood terms with a log_norm (a fitted RV jitter, or "
                 "the Jacobian of a position-angle prior) have no "
@@ -404,14 +376,6 @@ class _Objective(eqx.Module):
                     f"{type(regularizer).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
-
-    def residuals(self, z):
-        """Residual vector whose half sum of squares is ``loss(z)`` + const.
-
-        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
-        least-squares form (use L-BFGS or Adam).
-        """
-        self._check_least_squares()
         model = self.build(z)
         values = self.constrain(z)
         parts = self.data_residuals(model)
@@ -419,9 +383,25 @@ class _Objective(eqx.Module):
         for regularizer in self.regularizers:
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
-            r = _prior_residuals(path, prior, self._prior_value(values, path))
-            if r is not None:
-                parts.append(r)
+            value = self._prior_value(values, path)
+            if _flat_coordinate(prior) is not None:
+                continue  # flat in the fitted coordinate: adds nothing
+            prior = _base(prior)
+            if is_angle_vector(prior):
+                parts.append(prior.residuals(value))  # ``value`` is the vector
+            elif isinstance(prior, (dist.Uniform, dist.ImproperUniform)):
+                continue
+            elif isinstance(prior, dist.Normal):
+                parts.append(np.ravel((value - prior.loc) / prior.scale))
+            else:
+                raise NoLeastSquaresForm(
+                    f"The {type(prior).__name__} prior on {path!r} has no "
+                    "least-squares form; use Normal, Uniform, ImproperUniform "
+                    "or LogUniform or AngleVector priors (or one with a flat "
+                    "coordinate, such as an isotropic inclination; an "
+                    "AngleVector takes von Mises priors on angles), or fit "
+                    "with method='lbfgs' or 'adam'."
+                )
         return np.concatenate(parts)
 
     # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
@@ -634,30 +614,26 @@ class FitResult:
     info : dict
         ``method``; ``converged`` (Adam: the ``ftol_abs`` stop fired or
         ``grad_norm <= gtol``); ``steps``; ``loss_history`` (Adam: the unscaled
-        loss before each step); ``loss`` (the unscaled negative log
-        posterior); ``chi2`` and ``ndata``, per dataset and then per
-        likelihood term (a Toeplitz term's, re-evaluated directly at the
-        result); ``likelihood_forms``, what each term ran (``"toeplitz"``,
-        ``"direct"``, or ``"direct (auto): <unmet conditions>"``); ``chi2_red``,
-        the total χ² per data point; and ``grad_norm``, the infinity norm
-        (largest absolute component) of the gradient of the loss per data
-        point at the result, in the unconstrained coordinates of the
-        convergence test (see ``gtol`` in [`fit`][virgil.fitting.fit]). With fitted error terms, χ² uses the
-        inflated errors, and ``values`` holds the terms too. ``stop`` says
-        why an unconverged fit ended (``None`` when it converged, and for
-        an Adam fit with a finite loss, which has no convergence test):
-        ``"limit"`` (``max_steps``), ``"time"``
-        (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
-        the parameters), ``"non-finite"`` (a NaN or infinite loss or
-        gradient; any method ending on a non-finite loss is unconverged)
-        or ``"failed"`` (another LM failure). ``at_bound`` lists
-        the parameters and error terms that ended within 1/1000 of their
-        prior's range of one of its finite ends, in the coordinate they
-        are fitted in: a fit that runs into a prior bound (say an
-        eccentricity at 0.9) is often not at a mode. ``derived`` holds
-        quantities that likelihood terms compute from the fit and that are not
-        parameters, such as the profiled error scales ``ŝ`` of a radio
-        term (``"cal.sigma"``).
+        loss before each step); ``loss`` (the unscaled negative log posterior);
+        ``chi2`` and ``ndata``, per dataset then per likelihood term (a Toeplitz
+        term's re-evaluated directly at the result; with fitted error terms, on
+        the inflated errors); ``likelihood_forms`` (``"toeplitz"``,
+        ``"direct"`` or ``"direct (auto): <unmet conditions>"``); ``chi2_red``,
+        the total χ² per data point; ``grad_norm``, the largest absolute
+        component of the per-point loss gradient in the unconstrained
+        coordinates of the convergence test (``gtol`` in
+        [`fit`][virgil.fitting.fit]); ``stop``, why an unconverged fit ended
+        (``None`` if it converged):
+        ``"limit"`` (``max_steps``), ``"time"`` (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
+        the parameters), ``"non-finite"`` (a NaN or infinite loss or gradient; any
+        method ending on a non-finite loss is unconverged) or ``"failed"`` (another LM failure);
+        ``at_bound``, a tuple of the parameters and error terms that ended within 1/1000
+        of their prior's range of a finite end, in the coordinate they are
+        fitted in (a fit at a bound, say an eccentricity at 0.9, is often not
+        at a mode); and ``derived``, quantities that likelihood terms compute
+        and that are not parameters, such as a radio term's profiled error
+        scales ``ŝ`` (``"cal.sigma"``). With fitted error terms ``values``
+        holds them too.
     """
 
     model: object
@@ -735,9 +711,8 @@ def fit(
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
-        ``info["precondition_rounds"]`` records the spread per round. A maximum-entropy pixel's curvature is its
-        metric ``weight * b * (1 - b)`` (unsmoothed pixels); float32 can stall at weak weights, so use float64
-        there.
+        ``info["precondition_rounds"]`` records the spread per round. With a
+        maximum-entropy regularizer at weak weights float32 can stall: use float64.
         Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
         [Hutchinson (1989)](../references.md#hutchinson1989).
 
@@ -773,15 +748,20 @@ def fit(
             dtype,
         )
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
-        method = method or (
-            "lm"
-            if _has_residuals(problem, z0)
-            and not any(
-                getattr(r, "prefers_lbfgs", False)
-                for r in problem.regularizers
-            )
-            else "lbfgs"
-        )
+        if not method:
+            try:
+                jax.eval_shape(problem.residuals, z0)
+            except NoLeastSquaresForm:
+                method = "lbfgs"
+            else:
+                method = (
+                    "lbfgs"
+                    if any(
+                        getattr(r, "prefers_lbfgs", False)
+                        for r in problem.regularizers
+                    )
+                    else "lm"
+                )
         # Optimizers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
@@ -887,7 +867,12 @@ def fit(
             else None,
             "precondition_rounds": rounds,
             "at_bound": _at_bound(problem, values),
-            "derived": _derived(problem, values),
+            "derived": {
+                k: onp.asarray(v)
+                for term in problem.likelihoods
+                if hasattr(term, "derived")
+                for k, v in term.derived(values).items()
+            },
         }
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     return FitResult(
@@ -945,18 +930,6 @@ class _Budget:
         return elapsed
 
 
-def _derived(problem, values):
-    """Quantities a likelihood term computes from the fit that are not sites
-    (a radio term's profiled error scales ``ŝ``), by name."""
-    out = {}
-    for term in problem.likelihoods:
-        if hasattr(term, "derived"):
-            out.update(
-                {k: onp.asarray(v) for k, v in term.derived(values).items()}
-            )
-    return out
-
-
 # A parameter is at a bound of its prior when it is within this fraction of
 # the prior's range of one end, in the coordinate it is fitted in.
 _AT_BOUND = 1e-3
@@ -993,6 +966,7 @@ def _bound_fraction(prior, value, flat=True):
     return (onp.asarray(value, float) - low) / (high - low)
 
 
+# deliberate: test seam (tests/test_fitting.py)
 def _at_bound(problem, values):
     """The paths and noise sites within ``_AT_BOUND`` of a prior bound."""
     priors = dict(problem.priors)
@@ -1123,21 +1097,6 @@ def gauss_newton_mass(
     return out
 
 
-def _correlation_condition(covariance):
-    """The condition number of the covariance scaled to unit diagonal."""
-    if not onp.all(onp.isfinite(covariance)):
-        return onp.inf
-    diagonal = onp.diag(covariance)
-    if not onp.all(diagonal > 0):
-        return onp.inf
-    scale = onp.sqrt(diagonal)
-    correlation = covariance / onp.outer(scale, scale)
-    eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
-    if eigenvalues[0] <= 0.0:
-        return onp.inf
-    return float(eigenvalues[-1] / eigenvalues[0])
-
-
 def _gauss_newton_covariance(problem, z, dense=True):
     """F⁻¹ for F = JᵀJ + diag(P) over the flat coordinates of ``problem``.
 
@@ -1147,11 +1106,22 @@ def _gauss_newton_covariance(problem, z, dense=True):
     """
     covariance, ok = _covariance(problem, z, dense)
     covariance, ok = onp.asarray(covariance), bool(ok)
-    condition = _correlation_condition(covariance) if dense else None
-    return covariance, ok, condition
+    if not dense:
+        return covariance, ok, None
+    # condition number of the covariance scaled to unit diagonal
+    diagonal = onp.diag(covariance)
+    if not (onp.all(onp.isfinite(covariance)) and onp.all(diagonal > 0)):
+        return covariance, ok, onp.inf
+    scale = onp.sqrt(diagonal)
+    correlation = covariance / onp.outer(scale, scale)
+    eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
+    if eigenvalues[0] <= 0.0:
+        return covariance, ok, onp.inf
+    return covariance, ok, float(eigenvalues[-1] / eigenvalues[0])
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _covariance(problem, z, dense):
     """``(covariance, ok)`` of ``_gauss_newton_covariance``, from J and P.
 
@@ -1239,15 +1209,6 @@ def _covariance(problem, z, dense):
     return covariance, ok_factor & finite & positive
 
 
-def _has_residuals(problem, z):
-    """Whether the whole objective has a least-squares form."""
-    try:
-        jax.eval_shape(problem.residuals, z)
-    except NoLeastSquaresForm:
-        return False
-    return True
-
-
 # The solvers below are jitted at module level, with the problem as an
 # argument, so that repeated fits of problems with the same structure (an
 # L-curve, a grid of hyperparameters, a fit per dataset) reuse one
@@ -1273,12 +1234,14 @@ def _forward_summary(problem, z):
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per term shape
 def _direct_chi2(term, values):
     """χ² of a residual term, compiled once per shape."""
     return np.sum(term(values) ** 2)
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _gradient_norm(problem, z, scale):
     """The largest component of the loss-per-data-point gradient at ``z``."""
     return _largest(jax.grad(_scaled_loss(problem, scale))(z))
@@ -1319,6 +1282,7 @@ def _final_gradient(carry, metric=None):
 
 
 @jax.jit
+# deliberate: jit boundary
 def _state_gradient_norm(state, metric=None):
     gradient = optax.tree_utils.tree_get(state, "grad")
     return _largest(gradient if metric is None else metric.gradient(gradient))
@@ -1397,13 +1361,20 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
         return converged | spent, result
 
 
+# deliberate: optx callback and test seam
 def _lm_residuals(z, args):
     problem, scale, masks = args
     rows = problem.residuals(z) / np.sqrt(scale)
-    return np.concatenate([rows, _gauge_residuals(masks, z)])
+    # One residual per gauge block, the log total flux ``Σ exp(x)``: it turns the
+    # constant null direction of the data's Jacobian (a QR solve steps along it
+    # by rounding noise) into a well-conditioned one held at 0, where
+    # ``_recentre`` puts it. The loss and the stopping test do not see it.
+    gauge = [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
+    return np.concatenate([rows, np.zeros(0)] + gauge)
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _lm_tolerance(problem, z0, scale, gtol):
     gradient = jax.grad(_scaled_loss(problem, scale))(z0)
     return _tolerance(gradient, gtol)
@@ -1412,16 +1383,6 @@ def _lm_tolerance(problem, z0, scale, gtol):
 # Up to this many unconstrained coordinates, LM's inner solve is a dense QR
 # of the Jacobian, which costs one Jacobian-vector product per coordinate.
 _DENSE_LM = 200
-
-
-def _lm_linear_solver(z0, cg_steps):
-    """QR for a few coordinates, else CG on the normal equations, run for exactly
-    ``cg_steps`` steps (no more than the number of coordinates).
-    """
-    n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
-    if n <= _DENSE_LM:
-        return lx.QR()
-    return lx.Normal(lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n)))
 
 
 # Steps per chunk when fit has a time limit or reports progress: LM steps
@@ -1442,7 +1403,15 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     damping reset, so the path can differ slightly from an unchunked run.
     """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
-    linear_solver = _lm_linear_solver(z0, cg_steps)
+    # QR for a few coordinates, else CG on the normal equations, run for
+    # exactly ``cg_steps`` steps (no more than the number of coordinates).
+    n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
+    if n <= _DENSE_LM:
+        linear_solver = lx.QR()
+    else:
+        linear_solver = lx.Normal(
+            lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n))
+        )
     chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
     masks = _gauge_masks(problem)
     z, steps = z0, 0
@@ -1485,6 +1454,7 @@ _LBFGS_MEMORY = 100
 _LBFGS_MIN_MEMORY = 5
 
 
+# deliberate: test seam (tests/test_fitting.py)
 def _lbfgs_memory(memory, z):
     """``memory`` if given, else 100 cut so that the tree ``z`` fits the budget."""
     if memory is not None:
@@ -1546,6 +1516,7 @@ def _gn_diagonal(rows, x, probes, key=None):
     return np.mean(jax.lax.map(squared, keys), axis=0)
 
 
+# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
 def _hessian_diagonal(f, x, probes, key=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
     the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
@@ -1570,6 +1541,7 @@ def _hessian_diagonal(f, x, probes, key=None):
     return np.mean(jax.lax.map(estimate, keys), axis=0)
 
 
+# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
 def _gn_params_diagonal(params, loss, x, probes, key=None):
     """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
     of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
@@ -1651,6 +1623,8 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
+        # deliberate: the data JᵀJ and other terms are dropped on these pixels
+        # (measured faster than adding them)
         curvature = _gn_diagonal(rows, flat, probes, key)
         diagonal = np.where(curvature > 0.0, curvature, diagonal)
     return diagonal
@@ -1684,19 +1658,18 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b * (1 - b)`` (the softmax's, unsmoothed pixels):
-    the data JᵀJ and the other terms are dropped there (measured faster than
-    adding them), so it is a scale, not the curvature, at weak weights. It is the scale
+    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
+    (1 - b)`` (the softmax's, unsmoothed pixels). The data JᵀJ and other terms
+    are dropped there, so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
-    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
-    matrix.
+    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 
-    Source: [Bekas et al. (2007)](../references.md#bekas2007) and
-    [Hutchinson (1989)](../references.md#hutchinson1989) probes;
+    Source: probes, [Bekas et al. (2007)](../references.md#bekas2007) and
+    [Hutchinson (1989)](../references.md#hutchinson1989); curvature,
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
-    [Cornwell & Evans (1985)](../references.md#cornwellevans1985);
-    Gauss–Newton curvature after [Martens (2010)](../references.md#martens2010)
-    and [Schraudolph (2002)](../references.md#schraudolph2002).
+    [Cornwell & Evans (1985)](../references.md#cornwellevans1985),
+    [Martens (2010)](../references.md#martens2010),
+    [Schraudolph (2002)](../references.md#schraudolph2002).
 
     Parameters
     ----------
@@ -1832,20 +1805,6 @@ def _recentre(problem, z):
     return out
 
 
-def _gauge_residuals(masks, z):
-    """One residual per gauge block, the log total flux ``Σ exp(x)``.
-
-    It turns the constant null direction of the data's Jacobian (a QR solve
-    steps along it by rounding noise) into a well-conditioned one that is held
-    at 0, where ``_recentre`` puts it. The loss and the stopping test do not
-    see it.
-    """
-    return np.concatenate(
-        [np.zeros(0)]
-        + [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
-    )
-
-
 def _metric(problem, z, scale, round=0):
     """``(metric, stats)`` at ``z`` for a loss per data point ``scale``.
 
@@ -1938,6 +1897,7 @@ def _lbfgs_loop(
 
 
 @eqx.filter_jit
+# deliberate: jit boundary; tests/test_fit_precondition.py counts its compiles
 def _lbfgs_run(
     problem,
     z0,
@@ -1986,6 +1946,7 @@ def _lbfgs_run(
     return carry, tolerance
 
 
+# deliberate: test seam (tests/test_pipeline_star.py)
 def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
     if stop == "time":
@@ -2000,7 +1961,15 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             "model and priors for invalid values."
         )
     if method == "lbfgs":
-        return _lbfgs_not_converged(method, stop, steps, limit, dtype)
+        head = f"fit(method={method!r}) did not converge"
+        if stop == "limit":
+            return f"{head} in {steps} steps, the step limit; raise max_steps."
+        hint = "; dtype='float64' can go further" if dtype == "float32" else ""
+        return (
+            f"{head}: it stopped after {steps} of {limit} steps, when a step no "
+            f"longer changed the parameters (the line search ran out of {dtype} "
+            f"precision{hint})."
+        )
     if stop == "failed":
         # The solver gave up before its step limit: no damping found a step
         # that lowers the loss, as at a minimum with a discontinuous or
@@ -2019,19 +1988,7 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
-def _lbfgs_not_converged(method, stop, steps, limit, dtype):
-    """The warning for an unconverged L-BFGS fit, saying why it stopped."""
-    head = f"fit(method={method!r}) did not converge"
-    if stop == "limit":
-        return f"{head} in {steps} steps, the step limit; raise max_steps."
-    hint = "; dtype='float64' can go further" if dtype == "float32" else ""
-    return (
-        f"{head}: it stopped after {steps} of {limit} steps, when a step no "
-        f"longer changed the parameters (the line search ran out of {dtype} "
-        f"precision{hint})."
-    )
-
-
+# deliberate: test seam (tests/test_fit_precondition.py)
 def _lbfgs(
     problem,
     z0,
@@ -2084,6 +2041,7 @@ def _lbfgs(
             size = limit  # little progress: the rest as one last round
 
 
+# deliberate: named step of the restart loop, with its own chunked state
 def _lbfgs_round(
     problem,
     z0,

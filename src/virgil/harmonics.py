@@ -120,11 +120,11 @@ def image_from_linear(c, s):
 def von_mises_image_harmonics(kappa, theta0, degree, n_fft):
     r"""Image harmonics of $\exp[\kappa \cos(\theta - \theta_0)]$.
 
-    $I_m = [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$ with $I_m$ the modified
-    Bessel function, computed by a small FFT of $\exp[\kappa(\cos\theta_j - 1)]$
-    on ``n_fft`` points (no special function; the aliasing error is
+    $I_m = [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$ ($I_m(\kappa)$ the
+    modified Bessel function), computed by a small FFT of
+    $\exp[\kappa(\cos\theta_j - 1)]$ on ``n_fft`` points. The aliasing error is
     $I_{n_{\rm fft} - m}/I_0$, negligible unless $\kappa$ is of the order of
-    ``n_fft**2 / 30``).
+    ``n_fft**2 / 30``.
 
     Parameters
     ----------
@@ -142,9 +142,8 @@ def von_mises_image_harmonics(kappa, theta0, degree, n_fft):
     image : array-like
         Complex ``I_0 .. I_degree`` (``I_0 = 1``), shape ``(degree + 1, ...)``.
     dropped : array-like
-        Fraction of the power of the structure,
-        $\sum_{m > M} |I_m|^2 / \sum_{m \ne 0} |I_m|^2$, that the truncation
-        drops, shape ``(...)``.
+        Power dropped by the truncation,
+        $\sum_{m > M} |I_m|^2 / \sum_{m \ne 0} |I_m|^2$, shape ``(...)``.
     """
     kappa = np.asarray(kappa)
     theta0 = np.broadcast_to(np.asarray(theta0), np.shape(kappa))

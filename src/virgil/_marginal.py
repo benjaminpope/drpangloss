@@ -22,6 +22,7 @@ _N_QUADRATURE = 64
 
 
 @functools.cache
+# deliberate: cache boundary, one node set per order
 def _leggauss(order):
     return onp.polynomial.legendre.leggauss(order)
 

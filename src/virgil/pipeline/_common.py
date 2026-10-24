@@ -22,7 +22,7 @@ from . import _checks, _io
 _BOUND_FRACTION = 0.01
 
 
-def _bound_samples(prior, samples):
+def _bound_samples(prior, samples):  # deliberate: test seam
     """Fraction of ``samples`` in the outer ``_BOUND_FRACTION`` of the
     prior's finite range at either end, or ``None`` if it has no edges.
 
@@ -76,15 +76,6 @@ def _geometry(data):
     }
 
 
-def _spatial_frequencies(data):
-    """The spatial frequency B/λ of every sample of ``data`` (cycles per
-    radian), in the shape of ``data.u``."""
-    u = onp.asarray(data.u, dtype=float)
-    v = onp.asarray(data.v, dtype=float)
-    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
-    return onp.hypot(u, v) / wavel
-
-
 def _load_report(p, **extra):
     """The ``load`` stage: the data's summary report, and its OIFITS copy.
 
@@ -122,7 +113,7 @@ def _chi2(model, data, **noise):
     return float(onp.sum(r**2)), r
 
 
-def _m2loglike(model, data, **noise):
+def _m2loglike(model, data, **noise):  # deliberate: test seam
     """−2 log L of ``model``, including the error terms' normalization.
 
     This is the score for comparing models and lobes when error scales are
@@ -213,7 +204,7 @@ def _golden_max(f, lo, hi, steps=_GOLDEN_STEPS):
     return 0.5 * (a + b)
 
 
-def _profiled_scales(model, data, blocks):
+def _profiled_scales(model, data, blocks):  # deliberate: test seam
     """The error scales that maximize the likelihood of ``model``.
 
     Each scale multiplies the errors of one block of ``_scale_blocks`` and
@@ -249,7 +240,9 @@ def _profiled_m2loglike(build, start, data, diam, blocks):
 
 
 @eqx.filter_jit
-def _m2loglike_grid_jit(build, start, data, diams, blocks, batch_size):
+def _m2loglike_grid_jit(
+    build, start, data, diams, blocks, batch_size
+):  # deliberate: jit boundary
     def one(diam):
         return _profiled_m2loglike(build, start, data, diam, blocks)
 
@@ -257,7 +250,9 @@ def _m2loglike_grid_jit(build, start, data, diams, blocks, batch_size):
 
 
 @eqx.filter_jit
-def _refine_diameter_jit(build, start, data, low, high, blocks):
+def _refine_diameter_jit(
+    build, start, data, low, high, blocks
+):  # deliberate: jit boundary
     def loglike(log_diam):
         m2, _ = _profiled_m2loglike(
             build, start, data, np.exp(log_diam), blocks
@@ -268,7 +263,9 @@ def _refine_diameter_jit(build, start, data, low, high, blocks):
     return diam, *_profiled_m2loglike(build, start, data, diam, blocks)
 
 
-def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
+def _m2loglike_grid(  # deliberate: float64 wrapper of the jit entry, test seam
+    build, start, data, diams, noise=None, batch_size=None
+):
     """−2 log L of ``build({**start, "diam": d})`` over the diameters ``d``.
 
     One batched, jitted evaluation in float64. With ``noise`` (the
@@ -296,7 +293,9 @@ def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
         return onp.asarray(m2), {k: onp.asarray(v) for k, v in scales.items()}
 
 
-def _refine_diameter(build, start, data, low, high, noise):
+def _refine_diameter(
+    build, start, data, low, high, noise
+):  # deliberate: float64 wrapper of the jit entry
     """The diameter in ``[low, high]`` of least profiled −2 log L.
 
     Golden-section search in ln θ (the profiled likelihood is unimodal on
@@ -459,7 +458,7 @@ def _noise_quantiles(samples):
     return noise or None
 
 
-def _moments(r):
+def _moments(r):  # deliberate: test seam
     r = onp.asarray(r, dtype=float)
     if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
         return 0.0, -3.0  # scipy gives NaN for (near-)constant residuals
