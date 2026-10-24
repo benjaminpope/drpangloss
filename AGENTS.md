@@ -167,10 +167,15 @@ and writing history into docstrings. So:
 7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
    Above +1,000 `src` lines, the PR description says what the size buys and what
    it supersedes.
-8. **Inline trivial private helpers.** Don't add a private function that is
-   called once and has three statements or fewer, unless it is a `jit`/`vmap`
-   boundary, a test seam or a named step. CI lists the ones a PR adds
-   (`python scripts/code_shape.py --since origin/main`).
+8. **No single-use private helpers.** CI fails a PR that adds a private def
+   (module-level, nested or method) called exactly once in the package, at any
+   size: inline it. Exempt: a `# deliberate: <reason>` comment on the def line or
+   the line above; `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions
+   and their `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions;
+   callbacks (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`,
+   `map`); and names used in `tests/`. Only additions fail, measured against the
+   PR base (`python scripts/code_shape.py --since origin/main`). The base branch's
+   copy of the script decides, so a PR cannot weaken the gate.
 
 ## Docstring style
 
