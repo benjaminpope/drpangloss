@@ -13,7 +13,8 @@ B1–B8 therefore carries a **Status**:
 - *novel / experimental*: no precedent found.
 
 Each item also carries **Traceability**: the virgil PRs and tests (checked on `origin/main` on 2026-10-23), and
-the virgil-validation (vv) check, or "none yet".
+the virgil-validation (vv) check, or "none yet". Re-audited against `origin/main` of both repositories on
+2026-10-23 (virgil#531); the D-ledger below records the findings.
 
 **Status of citations.** Every reference below was checked on 2026-10-23, against NASA ADS (bibcode given) or,
 for non-ADS items, Crossref/DOI, the publisher or arXiv (DOI given). Two items could not be verified and are
@@ -65,14 +66,16 @@ marked *(unverified)*. Corrections are listed at the end.
 ### B2. Diagonal Gauss–Newton preconditioning with an entropy metric
 - **What:** `precondition="diag"` rescales L-BFGS coordinates by an estimate of the Gauss–Newton diagonal.
   - The data part is estimated stochastically with Rademacher probes (exact by JVP below 1024 coordinates).
-  - On image pixels, the data part is replaced by the entropy's own metric (`MaxEntropy.metric_rows`, w·b).
+  - On image pixels, the data part is replaced by the entropy's own metric (`MaxEntropy.metric_rows`): w·b in
+    ln b, which is w·b(1−b) in the Image's softmax logits, the coordinates the fit uses (D13).
   - `prefers_lbfgs` gates which terms use it.
 - **Where:** virgil#474, #505.
 - **Status:** derived (the parts are established).
   - Rests on: the Gauss–Newton curvature of a least-squares term (Martens 2010; Schraudolph 2002), its diagonal by
     Hutchinson-type probes (Bekas et al. 2007), and the entropy metric of MEM (Skilling & Bryan 1984).
   - Derivation, in one line: Skilling & Bryan's metric is Σ db²/b in image space, which is Σ b dη² in η = ln b;
-    with weight w it is the diagonal w·b. On pixels where the entropy dominates the curvature, this replaces the
+    with weight w it is w·b in ln b. The Image's coordinates are the logits η of a softmax over the support, so the
+    metric is pulled back through db_i/dη_j = b_i(δ_ij − b_j) and its diagonal is w·b(1−b) (D13). On pixels where the entropy dominates the curvature, this replaces the
     probe estimate of the data part.
 - **Traceability:**
   - PRs #474, #486, #505 (merged). Tests, all in `tests/test_fit_precondition.py`:
@@ -81,17 +84,23 @@ marked *(unverified)*. Corrections are listed at the end.
     `test_max_entropy_curvature_is_the_weight_times_the_image`,
     `test_the_entropy_metric_replaces_the_data_curvature_on_its_pixels`,
     `test_a_known_diagonal_metric_is_removed`, `test_the_optimum_and_the_gradient_norm_are_unchanged`.
-  - vv check: `--precondition {none,diag}` in `scripts/alma_imlup_maxent.py` (a switch and per-round stats, not
-    an independent check of the preconditioner).
+  - vv checks (`tests/test_radio_innovations.py` on vv `main`, mathematics root): the diagonal equals the dense
+    diagonal of JᵀJ; the probe estimate is within its stochastic error of the exact one; with `MaxEntropy(w)` the
+    diagonal is w·b(1−b), the Skilling–Bryan metric pulled back through the softmax, to 1e-9 (the vv test also
+    shows it differs from w·b by up to 20% on a 6×6 image). Plus `--precondition {none,diag}` in
+    `scripts/alma_imlup_maxent.py` (a switch and per-round stats). The vv evidence file `latest.jsonl` (0.4.1 run
+    of 2026-10-23) has no record for these tests, as they skip on the pinned virgil: they are not yet pinned
+    evidence.
 - **Prior art:**
   - Hutchinson-type diagonal estimation: Bekas, Kokiopoulou & Saad 2007, Appl. Numer. Math. 57, 1214
-    (`2007ApNM...57.1214B`); Rademacher probes, Hutchinson 1990, Commun. Stat. Simul. Comput. 19, 433,
-    doi:10.1080/03610919008812866. We measured about 35% error with Gaussian probes on our nearly diagonal
+    (`2007ApNM...57.1214B`); Rademacher probes, Hutchinson 1989, Commun. Stat. Simul. Comput. 18, 1059,
+    doi:10.1080/03610918908812806 (`1989CoSSC..18.1059H`; ADS also lists a 1990 record of the same title,
+    vol. 19, 433, `1990CoSSC..19..433H`). We measured about 35% error with Gaussian probes on our nearly diagonal
     metric, which is why we use Rademacher.
   - The entropy metric as the natural preconditioner in MEM: Skilling & Bryan 1984, MNRAS 211, 111
     (`1984MNRAS.211..111S`); Cornwell & Evans 1985, A&A 143, 77 (`1985A&A...143...77C`).
-  - Gauss–Newton curvature in Hessian-free optimization: Martens 2010, ICML 27, 735–742 (no DOI; the paper
-    uses the Gauss–Newton matrix as its curvature matrix); Schraudolph 2002, Neural Comput. 14, 1723,
+  - Gauss–Newton curvature in Hessian-free optimization: Martens 2010, ICML 27, 735–742 (no DOI, not on ADS;
+    title and author checked in the ICML 2010 PDF; the paper uses the Gauss–Newton matrix as its curvature matrix); Schraudolph 2002, Neural Comput. 14, 1723,
     doi:10.1162/08997660260028683.
 
 ### B3. Nuisance parameterization for conditioning and gauge
@@ -158,7 +167,7 @@ marked *(unverified)*. Corrections are listed at the end.
   - Multiscale in VLBI: DoG-HiT, Müller & Lobanov 2022, A&A 666, A137 (`2022A&A...666A.137M`); DoB-CLEAN,
     Müller & Lobanov 2023, A&A 672, A26 (`2023A&A...672A..26M`).
 
-### B5. Exact Toeplitz (dirty-beam) likelihood with free offsets (virgil#516, open)
+### B5. Exact Toeplitz (dirty-beam) likelihood with free offsets (virgil#516, merged)
 - **What:** χ² = Σ_k [g_k² IᵀB_k I − 2 g_k IᵀD_k(Δ_k)] + C, where k runs over (observation, spectral window),
   g_k is the observation's gain, B_k the dirty beam (a convolution done with 2×-padded FFTs) and D_k the dirty
   image. The σ profiling needs χ² for each k too. All B_k and D_k are precomputed once, so each evaluation is
@@ -175,8 +184,8 @@ marked *(unverified)*. Corrections are listed at the end.
     windowed sinc to 2e-6–3e-9.
 - **Also planned:** a fitted spectral index through Taylor-moment beams, and exact Hessian-vector products
   for truncated Newton-CG.
-- **Where:** virgil#516 (open, not yet on `main`): `virgil.radio_toeplitz` and `virgil._nufft_spread`. The design
-  note `design/toeplitz_likelihood.md` ships with it.
+- **Where:** virgil#516 (merged): `virgil.radio_toeplitz` and `virgil._nufft_spread`. The design
+  note `design/toeplitz_likelihood.md` shipped with it.
 - **Status:**
   - The Toeplitz quadratic and cross terms: established (Fessler et al. 2005).
   - Free offsets (`offsets="spread"`): opt-in, never the default, and derived. They are a type-3 evaluation
@@ -189,15 +198,19 @@ marked *(unverified)*. Corrections are listed at the end.
     real Δ. The model visibility is M_j = e^{−2πi u_j·Δ} F(I)(u_j), so |M_j|² does not depend on Δ and the
     beam term is offset-free.
 - **Traceability:**
-  - virgil#516 (open): `virgil.radio_toeplitz`, `virgil._nufft_spread`. Tests: `tests/test_radio_toeplitz.py`
+  - virgil#516 (merged): `virgil.radio_toeplitz`, `virgil._nufft_spread`. Tests: `tests/test_radio_toeplitz.py`
     (13 fast, 9 slow; the "Tests" table of the PR lists each guarantee), including
     `test_matches_direct_term` (loss differences and gradients against `ComplexVisData.term`, ≤ 1e-10, with and
     without offsets), `test_matches_direct_term_at_scale`, `test_spread_grid_against_nufftax_and_direct_sums`,
     `test_fit_reaches_the_direct_optimum`. Building blocks on main (PR #441, merged), `tests/test_radio.py`:
     `test_dirty_image_matches_brute_force`, `test_dirty_beam_peak_and_briggs_limits`,
     `test_dirty_residual_of_true_model_is_zero`.
-  - vv check: "IM Lup A100 Toeplitz vs direct at the R_mpol solution" (PR pending); timing and large-data
-    agreement are not yet demonstrated.
+  - vv checks on vv `main`: `tests/test_radio_innovations.py` (free-offset χ² equals an independent direct DFT
+    χ² up to the documented bounds, with a control that drops the offsets and a guard that refuses baselines
+    past the margin; mathematics root) and `tests/test_alma_toeplitz_check.py` (the check script on a small
+    synthetic set). The IM Lup A100 run (`scripts/alma_imlup_toeplitz_check.py`: Toeplitz vs direct at the
+    R_mpol solution, timing) is not yet in the evidence; the 5–10 ms estimate is unmeasured and large-data
+    agreement is not demonstrated. As for B2, the evidence file has no record of these tests.
 - **Prior art:**
   - Toeplitz embedding for NUFFT normal operators: Wajer & Pruessmann 2001, Proc. ISMRM 9, 767 *(unverified:
     the abstract could not be found online; the citation is from memory)*; Fessler, Lee, Olafsson, Shi, Noll
@@ -247,27 +260,34 @@ marked *(unverified)*. Corrections are listed at the end.
     residual-based mixed-precision iterative refinement.
 - **Traceability:** the δV loss itself is not on `origin/main`, so no test. Related: PR #441 and
   `tests/test_radio.py::test_model_and_term_in_float32`; commit 80d71d1 (float32 against float64 image
-  visibilities on long baselines). vv check: none yet.
+  visibilities on long baselines). vv check: `tests/test_radio_innovations.py`
+  (`crosscheck.radio_innovations.DeltaProblem`, the method alone: the float32 δV loss matches the float64 χ²
+  difference and is exact in float64); it exercises vv's own code, since virgil has none.
 - **Prior art:** mixed-precision iterative refinement: Wilkinson 1963, *Rounding Errors in Algebraic Processes*
   (Prentice-Hall; SIAM reissue doi:10.1137/1.9781611977523); Higham 2002, *Accuracy and Stability of Numerical
   Algorithms*, 2nd ed., SIAM, doi:10.1137/1.9780898718027.
 
-### B7. Marginalized antenna gains (other session; `design/antenna_gains.md`, branch `claude/radio-antenna-gains-42de72`, not yet on `main`)
+### B7. Marginalized antenna gains (`design/antenna_gains.md`; Stage 1 merged, virgil#513)
 - **What:** complex antenna gains per solution interval, marginalized with a Laplace approximation about a
   per-interval Gauss–Newton solution, with the log-determinant in the normalization. Stage 2 makes them
   correlated in time with a state-space Gaussian process (Kalman/RTS).
-- **Status:** established for Stage 1; derived for Stage 2. Nothing is built for `virgil.radio` yet
-  (design/antenna_gains.md: Stage 1 approved 2026-10-23, Stage 2 a plan).
+- **Status:** established for Stage 1 (built, opt-in: `CalibrationNuisance(antenna_gains=True)`, default
+  `False`); derived for Stage 2 (a plan, not built).
   - Stage 1 is the Laplace gain marginalization of Themis (Broderick et al. 2020, Sect. 6.8) applied to ALMA
     complex visibilities.
   - Stage 2 combines gains as Gaussian processes in time (Arras et al. 2019, A&A 627, A134) with the
     state-space form of a temporal GP (Hartikainen & Särkkä 2010). The derivation is the standard Kalman/RTS
     smoother for a Markov prior.
 - **Traceability:**
-  - For radio: no PR or test yet. The existing VLTI/AMI marginal-gain code is a different surface: PR #453,
+  - Stage 1: PR #513 (merged), `src/virgil/_antenna_gains.py`. Tests in `tests/test_radio_gains.py`:
+    `test_calibrated_limit`, `test_closure_invariance`, `test_snapshot_position_curvature_vanishes`,
+    `test_solved_gains_match_injected`, `test_recovery_with_large_phase_errors`,
+    `test_gradient_matches_finite_differences`, `test_lm_is_refused`, `test_intervals_never_cross_scans`.
+    The VLTI/AMI marginal-gain code is a different surface: PR #453,
     `tests/test_marginal_gains.py::test_two_blocks_with_gains_and_offsets_match_dense_integrals`,
     `::test_quadrature_matches_a_dense_integral_and_cholesky_logdet`, `tests/test_gains.py`.
-  - vv check: none yet.
+  - vv check: none for the radio gains (the vv graph has no antenna-gain node); the gain widths 0.1 and 0.5 rad
+    are choices, not validated values (`design/antenna_gains.md`).
 - **Prior art:**
   - Themis's Laplace gain marginalization: Broderick et al. 2020, ApJ 897, 139, Sect. 6.8
     (`2020ApJ...897..139B`; see corrections: this was cited as ApJ 898, 9). The hybrid imaging paper is
@@ -279,7 +299,7 @@ marked *(unverified)*. Corrections are listed at the end.
 
 ### B8. Ordered-subsets / minibatch acceleration (other session)
 - **What:** cycle through subsets of the data per step, as in OS-EM.
-- **Status:** established; not built. the scoping note `design/ordered_subsets.md` (not yet on `main`) is "scoping only, nothing built" (2026-10-23), and
+- **Status:** established; not built. The scoping note `design/ordered_subsets.md` (not yet on `main`) is "scoping only, nothing built" (2026-10-23), and
   proposes it only for joint gain and image fitting.
 - **Traceability:** no PR, no test. vv check: none yet.
 - **Prior art:** Hudson & Larkin 1994, IEEE Trans. Med. Imaging 13, 601 (`1994ITMI...13..601H`); SVRG, Johnson &
@@ -297,20 +317,23 @@ marked *(unverified)*. Corrections are listed at the end.
 | Item | Status | Key references | virgil tests | vv check |
 |---|---|---|---|---|
 | B1 full-batch L-BFGS, float64 | established | Liu & Nocedal 1989; Barnett+ 2019 | `test_nufft.py`, `test_fitting.py` (L-BFGS memory, convergence) | `alma_imlup_maxent.py`, `test_alma_maxent.py`, `test_alma_mpol_ref.py` |
-| B2 diagonal GN + entropy metric | derived | Bekas+ 2007; Skilling & Bryan 1984; Martens 2010 | `test_fit_precondition.py` | `--precondition` switch only |
+| B2 diagonal GN + entropy metric | derived | Bekas+ 2007; Skilling & Bryan 1984; Martens 2010 | `test_fit_precondition.py` | `test_radio_innovations.py` (dense JᵀJ, probes, entropy metric w·b(1−b)); not yet in pinned evidence |
 | B3 nuisance parameterization | established | Cornwell & Wilkinson 1981; Jeffreys 1946; DSHARP Sect. 4.4 | `test_radio.py` (nuisances, σ scales, offsets) | none yet (vv#178) |
 | B4 cold starts | CLEAN start and staging established; coarse-to-fine novel / experimental | Readhead & Wilkinson 1978; Chael+ 2018; Cornwell 2008 | `test_radio_clean.py`; staging none | `test_alma_clean.py`; staging none |
-| B5 Toeplitz likelihood, free offsets | Toeplitz terms established; free offsets (`offsets="spread"`, opt-in) derived (type-3 NUFFT; combination not found) | Fessler+ 2005; Lee & Greengard 2005; Barnett+ 2019 | virgil#516: `test_radio_toeplitz.py` (fast and slow) | IM Lup A100 Toeplitz vs direct (PR pending) |
-| B6 float32 δV loss | derived; experimental | Wilkinson 1963; Higham 2002 | none on main | none yet |
-| B7 marginalized gains | established (Stage 1), derived (Stage 2); not built for radio | Broderick+ 2020; Arras+ 2019; Hartikainen & Särkkä 2010 | none for radio (AMI: `test_marginal_gains.py`) | none yet |
+| B5 Toeplitz likelihood, free offsets | Toeplitz terms established; free offsets (`offsets="spread"`, opt-in) derived (type-3 NUFFT; combination not found) | Fessler+ 2005; Lee & Greengard 2005; Barnett+ 2019 | `test_radio_toeplitz.py` (fast and slow; virgil#516 merged) | `test_radio_innovations.py`, `test_alma_toeplitz_check.py`; IM Lup A100 run not yet in evidence |
+| B6 float32 δV loss | derived; experimental | Wilkinson 1963; Higham 2002 | none on main (no code) | `test_radio_innovations.py` (the method alone) |
+| B7 marginalized gains | established (Stage 1, built, opt-in), derived (Stage 2, plan) | Broderick+ 2020; Arras+ 2019; Hartikainen & Särkkä 2010 | `test_radio_gains.py` (Stage 1) | none yet |
 | B8 ordered subsets | established; not built | Hudson & Larkin 1994; Johnson & Zhang 2013 | none | none yet |
 
-### Provenance gaps (to do)
+### Provenance gaps
 
-The rule in AGENTS.md applies to new entries. These references for code already on `main` are not yet in
-`references/provenance.toml` (checked 2026-10-23), and the modules lack a `Source:` line: Zawadzki et al. 2023
-and Barnett et al. 2019 (B1, `nufft`); Martens 2010, Schraudolph 2002 and Cornwell & Evans 1985 (B2); Cornwell &
-Wilkinson 1981 and Pawitan 2001 (B3). A follow-up PR adds them.
+Closed on 2026-10-23 (virgil#531): Zawadzki et al. 2023, Cornwell & Wilkinson 1981, Cornwell & Evans 1985,
+Martens 2010, Schraudolph 2002 and Pawitan 2001 are in `references/provenance.toml`, with `Source:` lines in
+`virgil.radio` and `virgil.fitting.gauss_newton_diag`; Barnett et al. 2019, Hutchinson 1989 and Bekas et al. 2007
+were already there. Cornwell & Evans 1985 has no DOI or arXiv ID and is `verified` on its ADS record, as Skilling & Bryan is;
+Martens 2010 is not on ADS, has no DOI, and stays `verified = false` (title and author read in the ICML PDF).
+The other references of B1–B8 that no code cites (for example Chael 2016, Hudson & Larkin 1994, Readhead &
+Wilkinson 1978) are in the prose only and need entries when code cites them.
 
 ## C. Comparison with the state of the art
 
@@ -503,6 +526,75 @@ Defensible claims only. Each is conditional on the validation shown in vv.
   when it is hit.
 - **Gain marginalization for ALMA continuum** (B7), if built: the Themis approach, which ALMA RML tools lack.
 
+## D. Audit ledger (2026-10-23, virgil#531)
+
+### D13. The B2 diagonal: w·b or w·b(1−b)?
+
+- **Question.** The register wrote the diagonal of the entropy metric as w·b; the code (autodiff of
+  `MaxEntropy.metric_rows` through `gauss_newton_diag`) returns w·b(1−b).
+- **Parameterisation.** An `Image` stores logits η and its brightness is b = softmax(η) over the support
+  (`models.py`, `Image.brightness`: unit sum). The fit's coordinates are η (the flux is a separate parameter).
+  `metric_rows` returns rows r_i = 2√(w b_i).
+- **Derivation.** With db_i/dη_j = b_i(δ_ij − b_j) and dr_i/db_i = √(w/b_i):
+  (JᵀJ)_jj = Σ_i (w/b_i) b_i² (δ_ij − b_j)² = w Σ_i b_i (δ_ij − b_j)²
+  = w [b_j (1−b_j)² + b_j² Σ_{i≠j} b_i] = w b_j (1−b_j)[(1−b_j) + b_j] = w b_j (1−b_j).
+  In independent log-brightness coordinates (unnormalised b = e^η) the same rows give w·b, the
+  Skilling–Bryan metric Σ b dη². The softmax's unit-sum constraint projects out the mean direction, and the
+  full matrix is w(diag b − bbᵀ).
+- **Numerical check** (scratch script, float64, central differences, 6 logits, w = 3.7; not in the repo): the
+  finite-difference diagonal of JᵀJ equals w·b(1−b) to 2e-10 relative and differs from w·b by up to 20%; in
+  unnormalised ln b coordinates it equals w·b to 1e-10.
+- **Independent confirmation.** virgil-validation
+  `tests/test_radio_innovations.py::test_entropy_metric_replaces_the_data_curvature_with_the_pulled_back_skilling_bryan_metric`
+  asserts w·b(1−b) against virgil's `gauss_newton_diag` at 1e-9, from its own numpy code.
+- **Verdict: the code is right and the doc was wrong.** The doc gave the ln b metric, not the diagonal in the
+  coordinates the code uses. B2 and the docstrings of `fit`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now
+  say w·b(1−b). The two differ by under 1e-6 on a million-pixel image (b ≪ 1) and matter only on small images.
+  With `smoothed=True` the rows are in the smoothed pixels and the diagonal is not w·b(1−b); no claim covers
+  that case.
+
+### Defaults audit
+
+Every keyword default and auto-selection rule on a radio path, against the register (checked on `main`).
+**No experimental or derived-unvalidated method is on by default.** Findings follow the table.
+
+| Default | Where | Register item, status | Opt-in? |
+|---|---|---|---|
+| `fit(method=None)`: L-BFGS for a regularizer with `prefers_lbfgs` (MaxEntropy), else LM | `fitting.fit` | B1, established | n/a |
+| `lbfgs_memory=None` → 100, cut to a 1 GiB history; `dtype="float64"`; `gtol=1e-4` | `fitting.fit` | B1, established | n/a |
+| `precondition=None` (off) | `fitting.fit` | B2, derived | yes |
+| `ft="auto"`: NUFFT above size thresholds (eps 1e-12 f64, 1e-5 f32), else DFT | `_geometry` | B1 (NUFFT), established; thresholds are timings | n/a |
+| `ref_obs=0`; `gains`, `offsets`, `sigmas`, `alpha` all `True` (fitted, with more than one observation) | `CalibrationNuisance` | B3, established per part; the joint fit has no vv check (F2) | no: on |
+| `sigmas=True` fits the scales; `"profile"` sets ŝ = √(χ²/2N) with stop-gradient | `CalibrationNuisance` | B3, established | `"profile"` opt-in |
+| `offset_beams=3.0` (offset prior ±3 beams) | `CalibrationNuisance` | B3, a choice (F3) | no: on |
+| `antenna_gains=False`; `solint="scan"`; widths 0.1, 0.5 rad; `fit_gain_widths=False`; `gain_steps=5` | `CalibrationNuisance` | B7 Stage 1, established; widths are choices (F3) | yes |
+| `taper_fwhm_mas=None` (no taper) | `CalibrationNuisance` | A, established | yes |
+| `offsets="none"` (needs `offsets=False`); `"spread"` | `ComplexVisData.toeplitz`, `ToeplitzVisData` | B5: Toeplitz terms established; `"spread"` derived | `"spread"` opt-in |
+| `eps=1e-14`, `chunk_size=65536` | `toeplitz` | B5, numerical settings | n/a |
+| `conjugate=None`, `u_sign=None` → `MS_CONJUGATE=True`, `MS_U_SIGN=1.0` | `ComplexVisData.read_ms` | convention; vv checks it against CASA | n/a |
+| `weighting="natural"`, `robust=0.5`, `uvtaper=None`, `use_sigma=False` | `dirty_beam`, `dirty_image` | Briggs 1995; CASA practice (F4) | n/a |
+| `deconvolver="hogbom"`, `weighting="natural"`, `robust=0.5`, `niter=1000`, `gain=0.1`, `threshold=0.0`, `nsigma=0.0`, `smallscalebias=0.6`, `psfcutoff=0.35`, `usemask="user"`, `chunk_size=1e6`, NUFFT model visibilities | `radio_clean.clean` | B4 (Cotton–Schwab CLEAN), established; names and defaults after `tclean` | n/a |
+| `k=5`, `n_q=12`, `n_phi=16`, `seed=0` | `dartboard_folds` | none (F4) | n/a |
+
+**Findings (not fixed here).**
+
+- **F1.** The B2 code is right and the doc was wrong (D13); no code change.
+- **F2.** `CalibrationNuisance` fits gains, offsets and spectral index jointly by default (B3). Each part is
+  established; the joint fit has no vv check (vv#178 in progress). The default rests on published practice for
+  the parts, not on validation of the combination.
+- **F3.** Three defaults are choices with no source or validation: `offset_beams=3`, the gain widths 0.1 and
+  0.5 rad (B7; the design note calls them a starting point), and the 100 mas offset bound planned for cold
+  starts. They are documented as choices, and `at_bound` reports an offset that hits its bound.
+- **F4.** Radio surfaces with no register entry: the spectral-index nuisance `alpha` (fitted by default),
+  `ComplexVisData.sigma_scale` (an error-scale estimate from pair differences), `dartboard_folds`,
+  `primary_beam`, and the Briggs and uv-taper options of `dirty_image`. They are not claimed as innovations
+  here. Each needs a register entry, or a line saying it is established practice, with its tests and vv check.
+- **F5.** B4's staging (image-fixed gains first, then everything) and coarse-to-fine live in scripts, not in
+  library defaults.
+- **F6.** The vv tests for B2, B5 and B6 are on vv `main` but absent from `trust/evidence/latest.jsonl` (the
+  0.4.1 run skipped them on the pinned virgil). They are not release evidence until the evidence is rerun on a
+  virgil that has them.
+
 ## Citation corrections
 
 - **Broderick et al. 2020, ApJ 898, 9 (B7)** was cited for Themis's Laplace gain marginalization. That paper is
@@ -519,7 +611,7 @@ Defensible claims only. Each is conditional on the validation shown in vv.
   and Validation for ALMA Continuum Observations of Protoplanetary Disks"), no change.
 - **Wilkinson 1963 / Higham 2002 / Pawitan 2001** are books. Added the Higham and Pawitan DOIs and the SIAM
   reissue DOI for Wilkinson; the 1963 Prentice-Hall edition has no DOI.
-- **Hudson & Larkin 1994, Bekas et al. 2007, Hutchinson 1990, Skilling & Bryan 1984, Cornwell & Evans 1985,
+- **Hudson & Larkin 1994, Bekas et al. 2007, Hutchinson 1989, Skilling & Bryan 1984, Cornwell & Evans 1985,
   Cornwell & Wilkinson 1981, Högbom 1974, Clark 1980, Schwab 1984, Readhead & Wilkinson 1978, Pearson &
   Readhead 1984, EHT Paper IV, Chael 2016/2018, Akiyama 2017 (both), Carrillo 2012, Pratley 2018, Rau &
   Cornwell 2011, Barnett 2019, Tiede 2022, Blackburn 2020, Hartikainen & Särkkä 2010, Fessler 2005, Nash 2000,

@@ -113,14 +113,24 @@ def test_the_regularizer_curvature_is_included_and_estimated_by_probes():
 
 
 def test_max_entropy_curvature_is_the_weight_times_the_image():
-    start, priors, data = _image_fit(8)
-    values = {"env.log_brightness": start.env.log_brightness}
-    diag = gauss_newton_diag(
-        start, priors, data, values, regularizers=[MaxEntropy(7.0, path="env")]
-    )["env.log_brightness"]
-    # Σb = 1 and a flat start: b = 1/64, curvature w b (the softmax gauge
-    # adds the b² terms, 1/64² of it)
-    onp.testing.assert_allclose(diag, 7.0 / 64.0, rtol=0.05)
+    # In the Image's softmax logits the Skilling-Bryan metric w b is
+    # w b (1 - b): the unit-sum constraint subtracts the b² terms.
+    for n, eta in ((8, None), (3, "random")):
+        start, priors, data = _image_fit(n)
+        logits = start.env.log_brightness
+        if eta:
+            logits = jax.random.normal(jax.random.PRNGKey(0), logits.shape)
+        diag = gauss_newton_diag(
+            start,
+            priors,
+            data,
+            {"env.log_brightness": logits},
+            regularizers=[MaxEntropy(7.0, path="env")],
+        )["env.log_brightness"]
+        b = jax.nn.softmax(logits.ravel()).reshape(logits.shape)
+        onp.testing.assert_allclose(diag, 7.0 * b * (1.0 - b), rtol=1e-6)
+        if eta:  # far from w b, which the 3 x 3 image can tell apart
+            assert onp.max(onp.abs(diag / (7.0 * b) - 1.0)) > 0.1
 
 
 def test_the_entropy_metric_replaces_the_data_curvature_on_its_pixels():

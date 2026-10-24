@@ -16,6 +16,11 @@ Conventions (pinned by tests, see the Radio interferometry guide): the
 visibility is ``V(u, v) = Σ I(x, y) exp(-2πi (u x + v y))`` with ``x`` towards
 East and ``y`` towards North and ``u``, ``v`` in wavelengths, as everywhere in
 virgil; a weight is ``1 / σ²`` for each of the real and imaginary parts.
+
+Source: the RML objective of [Zawadzki et al. (2023)](../references.md#zawadzki2023);
+the reference-observation gauge of
+[Cornwell & Wilkinson (1981)](../references.md#cornwellwilkinson1981); the
+profiled error scale of [Pawitan (2001)](../references.md#pawitan2001).
 """
 
 from __future__ import annotations

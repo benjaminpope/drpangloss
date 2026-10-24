@@ -7,6 +7,13 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
+  and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
+  of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's
+  diagonal as `weight * b * (1 - b)`, as the code computes it; no behaviour changes.
+
 ### Added
 
 - CI fails a PR that adds a private function called exactly once in the package
