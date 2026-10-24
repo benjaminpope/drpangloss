@@ -611,6 +611,503 @@ class FitResult:
         its path and its vector at ``"<path>_vec"``, so that ``values`` can
         start numpyro (``init_to_value``).
     info : dict
+        ``method``; ``converged`` (``None`` for Adam, which has no convergence
+        test); ``steps``; ``loss`` (the unscaled negative log posterior);
+        ``chi2`` and ``ndata``, per dataset then per likelihood term (a Toeplitz
+        term's re-evaluated directly at the result; with fitted error terms, on
+        the inflated errors); ``likelihood_forms`` (``"toeplitz"``,
+        ``"direct"`` or ``"direct (auto): <unmet conditions>"``); ``chi2_red``,
+        the total χ² per data point; ``grad_norm``, the largest absolute
+        component of the per-point loss gradient in the unconstrained
+        coordinates of the convergence test (``gtol`` in
+        [`fit`][virgil.fitting.fit]); ``stop``, why an unconverged fit ended
+        (``None`` if it converged, and for an Adam fit with a finite loss):
+        ``"limit"``, ``"time"``, ``"stalled"`` (an L-BFGS step no longer moved
+        the parameters), ``"non-finite"`` (any method ending on a non-finite
+        loss is unconverged) or ``"failed"`` (another LM failure);
+        ``at_bound``, the parameters and error terms that ended within 1/1000
+        of their prior's range of a finite end, in the coordinate they are
+        fitted in (a fit at a bound, say an eccentricity at 0.9, is often not
+        at a mode); and ``derived``, quantities that likelihood terms compute
+        and that are not parameters, such as a radio term's profiled error
+        scales ``ŝ`` (``"cal.sigma"``). With fitted error terms ``values``
+        holds them too.
+    """
+
+    model: object
+    data: tuple
+    priors: dict
+    regularizers: tuple
+    noise: dict
+    likelihoods: tuple
+    flat: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model,
+        priors,
+        data,
+        regularizers=(),
+        noise=None,
+        likelihoods=(),
+        flat=True,
+    ):
+        self.model = model
+        self.flat = flat
+        self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+        self.likelihoods = tuple(likelihoods)
+        self.priors = {path: _traced(p) for path, p in priors.items()}
+        self.regularizers = tuple(regularizers)
+        self.noise = {
+            site: (prior if is_tied(prior) else _traced(prior), datasets, term)
+            for site, (prior, datasets, term) in noise_sites(
+                noise, len(self.data)
+            ).items()
+        }
+        if not self.priors:
+            raise ValueError("priors must name at least one free parameter.")
+        for path, prior in self.priors.items():
+            if isinstance(model, SourceModel):
+                model.get(path)  # raises for an unknown path
+                parent, _, name = path.rpartition(".")
+                hyper = (
+                    "sigma",
+                    "length_mas",
+                    "ell",
+                    "ell_r",
+                    "ell_theta",
+                    "length_r",
+                    "length_theta",
+                )
+                if (
+                    name in hyper
+                    and parent
+                    and isinstance(
+                        model.get(parent),
+                        (
+                            GaussianField,
+                            RadialGP,
+                            RadialGPFunction,
+                            MultipoleKernel,
+                            MultipoleField,
+                        ),
+                    )
+                ):
+                    warnings.warn(
+                        f"Fitting {path!r} by MAP: the hyperparameters of a "
+                        "Gaussian field are biased at the MAP (towards a flat "
+                        "field). Fix them, choose them from the evidence, or "
+                        "sample them.",
+                        UserWarning,
+                        stacklevel=external_stacklevel(),
+                    )
+            if is_flux_param(path):
+                _check_positive_flux_prior(path, prior)
+
+    @property
+    def _has_gains(self):
+        """Whether any dataset's covariance depends on the model: gains, or
+        marginalized flux scales (``OIData.has_model_covariance``)."""
+        return any(
+            getattr(d, "has_model_covariance", False) for d in self.data
+        )
+
+    @property
+    def paths(self):
+        """The free parameters' paths, in the order of ``priors``."""
+        return tuple(self.priors)
+
+    def _in_flat_coordinate(self, prior):
+        """Whether ``prior``'s parameter is fitted in its flat coordinate."""
+        return self.flat and _flat_coordinate(prior) is not None
+
+    def bijection(self, prior):
+        """The map from unconstrained coordinates to ``prior``'s support."""
+        if self._in_flat_coordinate(prior):
+            return _FlatBijection(*_flat_coordinate(prior))
+        return _bijection(prior)
+
+    @property
+    def sites(self):
+        """The numpyro sites of the free parameters, in the order of
+        ``priors``: ``"<path>_vec"`` for an angle vector, else its path."""
+        return tuple(
+            vector_site(p) if is_angle_vector(q) else p
+            for p, q in self.priors.items()
+        )
+
+    def _prior_value(self, values, path):
+        """The value a prior's density is evaluated at: the vector for an
+        angle vector, else the parameter."""
+        if is_angle_vector(self.priors[path]):
+            return values[vector_site(path)]
+        return values[path]
+
+    def init(self, values=None):
+        """Unconstrained coordinates of ``values`` (default: the template's).
+
+        Error terms start at 1 (scales and supplied gain widths), 0 (``wavel_offset``,
+        ``north_angle``) or 0.01 (added errors, other gain widths), or at their
+        prior's mean if that is outside the support or on its boundary.
+        """
+        values = {} if values is None else dict(values)
+        z = {}
+        for site, (prior, _, term) in self.noise.items():
+            if is_tied(prior):
+                continue  # a function of the parameters, not a coordinate
+            unit = term.endswith("scale") or term.endswith("_modes")
+            zero = term in ("wavel_offset", "north_angle")
+            default = 0.0 if zero else 1.0 if unit else 0.01
+            start = values.get(site, default)
+            if not bool(prior.support(np.asarray(start, float))):
+                start = prior.mean
+            z[site] = self.bijection(prior).inv(np.asarray(start, float))
+            if not bool(np.all(np.isfinite(z[site]))):
+                # On the boundary of a bounded prior (e.g. 0 for
+                # Uniform(0, ...)), the unconstrained coordinate is
+                # infinite: start inside it, at the prior's mean.
+                mean = np.asarray(prior.mean, float)
+                z[site] = self.bijection(prior).inv(mean)
+        for path, prior in self.priors.items():
+            if is_angle_vector(prior) and vector_site(path) in values:
+                z[path] = np.asarray(values[vector_site(path)], float)
+                continue
+            if path not in values:
+                if not isinstance(self.model, SourceModel):
+                    raise NoStartingValue(
+                        f"No starting value for {path!r}: pass init= when "
+                        "the model is a function."
+                    )
+                values[path] = self.model.get(path)  # raises if unknown
+            if is_angle_vector(prior):
+                # The unit vector of the starting angle (degrees).
+                angle = np.deg2rad(np.asarray(values[path], float))
+                z[path] = np.stack([np.cos(angle), np.sin(angle)])
+                continue
+            z[path] = self.bijection(prior).inv(
+                np.asarray(values[path], float)
+            )
+        return z
+
+    def constrain(self, z):
+        """Map unconstrained coordinates to parameter and error-term values.
+
+        An ``AngleVector`` angle appears twice: in degrees at its path, and as the
+        vector at ``"<path>_vec"``.
+        """
+        values = {}
+        for path, prior in self.priors.items():
+            if is_angle_vector(prior):
+                values[vector_site(path)] = z[path]
+                values[path] = vector_angle(z[path])
+            else:
+                values[path] = self.bijection(prior)(z[path])
+        for site, (prior, _, _) in self.noise.items():
+            if not is_tied(prior):
+                values[site] = self.bijection(prior)(z[site])
+        params = {path: values[path] for path in self.priors}
+        for site, (prior, _, _) in self.noise.items():
+            if is_tied(prior):
+                values[site] = prior(params)
+        return values
+
+    def build(self, z):
+        """The model with the parameters at unconstrained coordinates ``z``."""
+        values = self.constrain(z)
+        return build_model(
+            self.model, self.paths, [values[p] for p in self.paths]
+        )
+
+    def data_residuals(self, model, values=None):
+        """Whitened residuals of ``model`` for each dataset, as a list.
+
+        ``model`` is one model for all the datasets, or a list of them, one
+        per dataset; ``values`` holds the error terms, if any are fitted.
+        """
+        return [w for w, _ in self._whitened(model, values)]
+
+    def _whitened(self, model, values=None):
+        """(whitened residuals, inflated errors) for each dataset."""
+        models = _per_dataset(model, len(self.data))
+        values = {} if values is None else values
+        return [
+            _whitened_and_errors(m, d, noise_for(self.noise, values, i))
+            for i, (m, d) in enumerate(zip(models, self.data))
+        ]
+
+    def residuals(self, z):
+        """Residual vector whose half sum of squares is ``loss(z)`` + const.
+
+        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
+        least-squares form (use L-BFGS or Adam).
+        """
+        import numpyro.distributions as dist
+
+        if self.noise:
+            raise NoLeastSquaresForm(
+                "Fitted error terms have no least-squares form (the "
+                "likelihood's normalization depends on them); fit with "
+                "method='lbfgs' or 'adam'."
+            )
+        if self._has_gains:
+            raise NoLeastSquaresForm(
+                "Data with gains or marginalized flux scales have no "
+                "least-squares form (their covariance, and its determinant, "
+                "depend on the model); fit "
+                "with method='lbfgs' or 'adam'."
+            )
+        if any(_scalar(t) for t in self.likelihoods):
+            raise NoLeastSquaresForm(
+                "A likelihood term with a scalar χ² (no residual vector) has "
+                "no least-squares form; fit with method='lbfgs' or 'adam'."
+            )
+        if any(getattr(t, "has_log_norm", False) for t in self.likelihoods):
+            raise NoLeastSquaresForm(
+                "Likelihood terms with a log_norm (a fitted RV jitter, or "
+                "the Jacobian of a position-angle prior) have no "
+                "least-squares form; fit with method='lbfgs' or 'adam'."
+            )
+        for regularizer in self.regularizers:
+            if not hasattr(regularizer, "residuals"):
+                raise NoLeastSquaresForm(
+                    f"{type(regularizer).__name__} has no least-squares "
+                    "form; fit with method='lbfgs' or 'adam'."
+                )
+        model = self.build(z)
+        values = self.constrain(z)
+        parts = self.data_residuals(model)
+        parts += [term(values) for term in self.likelihoods]
+        for regularizer in self.regularizers:
+            parts.append(np.ravel(regularizer.residuals(_reference(model))))
+        for path, prior in self.priors.items():
+            value = self._prior_value(values, path)
+            if _flat_coordinate(prior) is not None:
+                continue  # flat in the fitted coordinate: adds nothing
+            prior = _base(prior)
+            if is_angle_vector(prior):
+                parts.append(prior.residuals(value))  # ``value`` is the vector
+            elif isinstance(prior, (dist.Uniform, dist.ImproperUniform)):
+                continue
+            elif isinstance(prior, dist.Normal):
+                parts.append(np.ravel((value - prior.loc) / prior.scale))
+            else:
+                raise NoLeastSquaresForm(
+                    f"The {type(prior).__name__} prior on {path!r} has no "
+                    "least-squares form; use Normal, Uniform, ImproperUniform or "
+                    "LogUniform or AngleVector priors (or one with a flat coordinate, "
+                    "such as an isotropic inclination; an AngleVector takes von Mises "
+                    "priors on angles), or fit with method='lbfgs' or 'adam'."
+                )
+        return np.concatenate(parts)
+
+    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
+
+    @property
+    def coordinate_keys(self):
+        """The keys of ``z`` in the order of the flat coordinate vector: the
+        paths of ``priors``, then the non-tied noise sites."""
+        return tuple(self.priors) + tuple(
+            site
+            for site, (prior, _, _) in self.noise.items()
+            if not is_tied(prior)
+        )
+
+    @property
+    def coordinate_sites(self):
+        """The numpyro sites of the flat coordinates, in the same order:
+        ``sites``, then the non-tied noise sites."""
+        return self.sites + self.coordinate_keys[len(self.priors) :]
+
+    def ravel(self, z):
+        """``(flat, unravel)``: ``z`` as one vector in ``coordinate_keys``
+        order, and the map back to a dict. (``ravel_pytree`` of a dict would
+        sort the keys, so the arrays go in as a list.)"""
+        keys = self.coordinate_keys
+        flat, unravel_list = ravel_pytree([z[k] for k in keys])
+
+        def unravel(x):
+            return dict(zip(keys, unravel_list(x)))
+
+        return flat, unravel
+
+    def _coordinate_priors(self):
+        priors = dict(self.priors)
+        priors.update({site: p for site, (p, _, _) in self.noise.items()})
+        return [(key, priors[key]) for key in self.coordinate_keys]
+
+    def curvature_rows(self, z, skip_scalar=False):
+        """The curvature rows ρ(z), whose Jacobian J gives JᵀJ.
+
+        In order: each dataset's mean and normalizer rows
+        (``likelihood._curvature_rows``), each likelihood term's residuals, and the
+        residuals of ``AngleVector`` priors. Regularizers are not included. A
+        scalar-χ² term has no rows: it raises :class:`NoLeastSquaresForm`
+        unless ``skip_scalar``.
+        """
+        scalar = [t for t in self.likelihoods if _scalar(t)]
+        if scalar and not skip_scalar:
+            raise NoLeastSquaresForm(
+                "A likelihood term with a scalar χ² has no curvature rows "
+                "(no Gauss–Newton mass or covariance from it)."
+            )
+        model = self.build(z)
+        values = self.constrain(z)
+        models = _per_dataset(model, len(self.data))
+        rows = [
+            _curvature_rows(m, d, noise_for(self.noise, values, i))
+            for i, (m, d) in enumerate(zip(models, self.data))
+        ]
+        rows += [
+            np.ravel(term(values))
+            for term in self.likelihoods
+            if not _scalar(term)
+        ]
+        rows += [
+            prior.residuals(z[path])
+            for path, prior in self.priors.items()
+            if is_angle_vector(prior)
+        ]
+        return np.concatenate(rows) if rows else np.zeros(0)
+
+    def _no_prior_curvature(self, prior, jacobian):
+        """Whether ``prior``'s coordinates have P = 0 by type (known when tracing).
+
+        Angle vectors, ``ImproperUniform``, and, without the Jacobian, priors flat in
+        their fitted coordinate and ``Uniform``. A prior that is neither elementwise
+        nor an angle vector raises :class:`NoLeastSquaresForm`.
+        """
+        import numpyro.distributions as dist
+
+        base = _base(prior)
+        # ``_base`` strips ``.expand`` and ``.to_event``: an image's
+        # ``Normal(0, 1).to_event(2)`` is still a separable, elementwise prior.
+        if is_angle_vector(prior):
+            return True
+        if isinstance(base, dist.ImproperUniform):
+            return True
+        if base.event_shape != ():
+            raise NoLeastSquaresForm(
+                f"{type(base).__name__} has event_shape {base.event_shape}: "
+                "its curvature is not diagonal, and the Gauss–Newton matrix "
+                "takes only elementwise priors and angle vectors."
+            )
+        if jacobian:
+            return False
+        return self._in_flat_coordinate(prior) or isinstance(
+            base, dist.Uniform
+        )
+
+    def curvature_zero(self, z, jacobian):
+        """A boolean NumPy vector over the flat coordinates: those whose P
+        is zero by type (``_no_prior_curvature``)."""
+        return onp.concatenate(
+            [
+                onp.full(
+                    np.size(z[key]), self._no_prior_curvature(p, jacobian)
+                )
+                for key, p in self._coordinate_priors()
+            ]
+        )
+
+    def curvature_diag(self, z, jacobian):
+        """P, the diagonal of curvature from elementwise priors, over the flat coordinates.
+
+        For each elementwise prior, ``max(0, ∂²/∂z² [-log p(x(z)) - log|dx/dz|])``,
+        the Jacobian term only if ``jacobian`` (NUTS's potential has it, ``fit``'s
+        loss does not). An ``AngleVector`` gives 0 (it has rows); a prior that is
+        neither elementwise nor an angle vector raises :class:`NoLeastSquaresForm`.
+        """
+        parts = []
+        for key, prior in self._coordinate_priors():
+            zk = np.asarray(z[key])
+            if self._no_prior_curvature(prior, jacobian):
+                parts.append(np.zeros(zk.size, zk.dtype))
+                continue
+            bijection = self.bijection(prior)
+
+            def potential(v, prior=prior, bijection=bijection):
+                term = -prior.log_prob(bijection(v))
+                if jacobian:
+                    term = term - _log_jacobian(bijection, v)
+                return np.sum(term)
+
+            ones = np.ones_like(zk)
+            second = jax.jvp(jax.grad(potential), (zk,), (ones,))[1]
+            parts.append(np.ravel(np.maximum(0.0, second)))
+        return np.concatenate(parts) if parts else np.zeros(0)
+
+    @property
+    def loss_constant(self):
+        """What ``loss`` leaves out of the scalar-χ² terms' loss."""
+        return sum(
+            (t.loss_constant for t in self.likelihoods if _scalar(t)), 0.0
+        )
+
+    def penalty(self, z):
+        """The summed regularizers at ``z``."""
+        model = _reference(self.build(z))
+        return sum((r.value(model) for r in self.regularizers), 0.0)
+
+    def loss(self, z):
+        """Negative log posterior (up to a constant) at ``z``.
+
+        A prior with a flat coordinate adds nothing; other priors are evaluated at the
+        constrained values, without the Jacobian of the bijection.
+        """
+        model = self.build(z)
+        values = self.constrain(z)
+        whitened = self._whitened(model, values)
+        chi2 = sum(np.sum(w**2) for w, _ in whitened)
+        norms = 0.0
+        for t in self.likelihoods:
+            if _scalar(t):
+                # Less its constants (``loss_constant``).
+                c, n = t.chi2_and_log_norm(values)
+                chi2, norms = chi2 + c, norms + n
+            elif hasattr(t, "residuals_and_log_norm"):
+                # One evaluation gives both (a profiled scale needs the
+                # residuals to find its own normalization).
+                r, n = t.residuals_and_log_norm(values)
+                chi2, norms = chi2 + np.sum(r**2), norms + n
+            else:
+                chi2 = chi2 + np.sum(t(values) ** 2)
+                if getattr(t, "has_log_norm", False):
+                    norms = norms + t.log_norm(values)
+        # With fitted error terms, the normalization of the Gaussian
+        # likelihood, sum(log σ), is no longer a constant.
+        log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
+        log_norm = log_norm if self.noise or self._has_gains else 0.0
+        # A likelihood term with a fitted jitter reports its own Σ log σ.
+        log_norm = log_norm + norms
+        penalty = sum(r.value(_reference(model)) for r in self.regularizers)
+        log_prior = sum(
+            np.sum(prior.log_prob(self._prior_value(values, path)))
+            for path, prior in self.priors.items()
+            if not self._in_flat_coordinate(prior)
+        )
+        for site, (prior, _, _) in self.noise.items():
+            if not is_tied(prior) and not self._in_flat_coordinate(prior):
+                log_prior = log_prior + np.sum(prior.log_prob(values[site]))
+        log_prior = log_prior + tied_log_prior(self.noise, values)
+        return 0.5 * chi2 + log_norm + penalty - log_prior
+
+
+@dataclasses.dataclass(frozen=True)
+class FitResult:
+    """The result of [`fit`][virgil.fitting.fit].
+
+    Attributes
+    ----------
+    model : SourceModel or list
+        The fitted model, or models (one per dataset) if the model function
+        returned a list.
+    values : dict
+        The fitted parameter values, keyed by path, in the model's own
+        parameters (not the flat coordinates some are fitted in). An angle with an
+        [`AngleVector`][virgil.angles.AngleVector] prior is in degrees at
+        its path and its vector at ``"<path>_vec"``, so that ``values`` can
+        start numpyro (``init_to_value``).
+    info : dict
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset and then per
@@ -703,9 +1200,8 @@ def fit(
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
-        ``info["precondition_rounds"]`` records the spread per round. A maximum-entropy pixel's curvature is its
-        metric ``weight * b * (1 - b)`` (unsmoothed pixels); float32 can stall at weak weights, so use float64
-        there.
+        ``info["precondition_rounds"]`` records the spread per round. With a
+        maximum-entropy regularizer at weak weights float32 can stall: use float64.
         Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
         [Hutchinson (1989)](../references.md#hutchinson1989).
 
@@ -954,6 +1450,7 @@ def _bound_fraction(prior, value, flat=True):
     return (onp.asarray(value, float) - low) / (high - low)
 
 
+# deliberate: test seam (tests/test_fitting.py)
 def _at_bound(problem, values):
     """The paths and noise sites within ``_AT_BOUND`` of a prior bound."""
     priors = dict(problem.priors)
@@ -1108,6 +1605,7 @@ def _gauss_newton_covariance(problem, z, dense=True):
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _covariance(problem, z, dense):
     """``(covariance, ok)`` of ``_gauss_newton_covariance``, from J and P.
 
@@ -1220,12 +1718,14 @@ def _forward_summary(problem, z):
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per term shape
 def _direct_chi2(term, values):
     """χ² of a residual term, compiled once per shape."""
     return np.sum(term(values) ** 2)
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _gradient_norm(problem, z, scale):
     """The largest component of the loss-per-data-point gradient at ``z``."""
     return _largest(jax.grad(_scaled_loss(problem, scale))(z))
@@ -1266,6 +1766,7 @@ def _final_gradient(carry, metric=None):
 
 
 @jax.jit
+# deliberate: jit boundary
 def _state_gradient_norm(state, metric=None):
     gradient = optax.tree_utils.tree_get(state, "grad")
     return _largest(gradient if metric is None else metric.gradient(gradient))
@@ -1344,13 +1845,20 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
         return converged | spent, result
 
 
+# deliberate: optx callback and test seam
 def _lm_residuals(z, args):
     problem, scale, masks = args
     rows = problem.residuals(z) / np.sqrt(scale)
-    return np.concatenate([rows, _gauge_residuals(masks, z)])
+    # One residual per gauge block, the log total flux ``Σ exp(x)``: it turns the
+    # constant null direction of the data's Jacobian (a QR solve steps along it
+    # by rounding noise) into a well-conditioned one held at 0, where
+    # ``_recentre`` puts it. The loss and the stopping test do not see it.
+    gauge = [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
+    return np.concatenate([rows, np.zeros(0)] + gauge)
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _lm_tolerance(problem, z0, scale, gtol):
     gradient = jax.grad(_scaled_loss(problem, scale))(z0)
     return _tolerance(gradient, gtol)
@@ -1430,6 +1938,7 @@ _LBFGS_MEMORY = 100
 _LBFGS_MIN_MEMORY = 5
 
 
+# deliberate: test seam (tests/test_fitting.py)
 def _lbfgs_memory(memory, z):
     """``memory`` if given, else 100 cut so that the tree ``z`` fits the budget."""
     if memory is not None:
@@ -1491,6 +2000,7 @@ def _gn_diagonal(rows, x, probes, key=None):
     return np.mean(jax.lax.map(squared, keys), axis=0)
 
 
+# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
 def _hessian_diagonal(f, x, probes, key=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
     the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
@@ -1515,6 +2025,7 @@ def _hessian_diagonal(f, x, probes, key=None):
     return np.mean(jax.lax.map(estimate, keys), axis=0)
 
 
+# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
 def _gn_params_diagonal(params, loss, x, probes, key=None):
     """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
     of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
@@ -1596,6 +2107,8 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
+        # deliberate: the data JᵀJ and other terms are dropped on these pixels
+        # (measured faster than adding them)
         curvature = _gn_diagonal(rows, flat, probes, key)
         diagonal = np.where(curvature > 0.0, curvature, diagonal)
     return diagonal
@@ -1629,19 +2142,17 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b * (1 - b)`` (the softmax's, unsmoothed pixels):
-    the data JᵀJ and the other terms are dropped there (measured faster than
-    adding them), so it is a scale, not the curvature, at weak weights. It is the scale
+    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
+    (1 - b)``: a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
-    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
-    matrix.
+    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 
-    Source: [Bekas et al. (2007)](../references.md#bekas2007) and
-    [Hutchinson (1989)](../references.md#hutchinson1989) probes;
+    Source: [Bekas et al. (2007)](../references.md#bekas2007),
+    [Hutchinson (1989)](../references.md#hutchinson1989),
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
-    [Cornwell & Evans (1985)](../references.md#cornwellevans1985);
-    Gauss–Newton curvature after [Martens (2010)](../references.md#martens2010)
-    and [Schraudolph (2002)](../references.md#schraudolph2002).
+    [Cornwell & Evans (1985)](../references.md#cornwellevans1985),
+    [Martens (2010)](../references.md#martens2010),
+    [Schraudolph (2002)](../references.md#schraudolph2002).
 
     Parameters
     ----------
@@ -1777,20 +2288,6 @@ def _recentre(problem, z):
     return out
 
 
-def _gauge_residuals(masks, z):
-    """One residual per gauge block, the log total flux ``Σ exp(x)``.
-
-    It turns the constant null direction of the data's Jacobian (a QR solve
-    steps along it by rounding noise) into a well-conditioned one that is held
-    at 0, where ``_recentre`` puts it. The loss and the stopping test do not
-    see it.
-    """
-    return np.concatenate(
-        [np.zeros(0)]
-        + [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
-    )
-
-
 def _metric(problem, z, scale, round=0):
     """``(metric, stats)`` at ``z`` for a loss per data point ``scale``.
 
@@ -1883,6 +2380,7 @@ def _lbfgs_loop(
 
 
 @eqx.filter_jit
+# deliberate: jit boundary; tests/test_fit_precondition.py counts its compiles
 def _lbfgs_run(
     problem,
     z0,
@@ -1931,6 +2429,7 @@ def _lbfgs_run(
     return carry, tolerance
 
 
+# deliberate: test seam (tests/test_pipeline_star.py)
 def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
     if stop == "time":
@@ -1945,7 +2444,15 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             "model and priors for invalid values."
         )
     if method == "lbfgs":
-        return _lbfgs_not_converged(method, stop, steps, limit, dtype)
+        head = f"fit(method={method!r}) did not converge"
+        if stop == "limit":
+            return f"{head} in {steps} steps, the step limit; raise max_steps."
+        hint = "; dtype='float64' can go further" if dtype == "float32" else ""
+        return (
+            f"{head}: it stopped after {steps} of {limit} steps, when a step no "
+            f"longer changed the parameters (the line search ran out of {dtype} "
+            f"precision{hint})."
+        )
     if stop == "failed":
         # The solver gave up before its step limit: no damping found a step
         # that lowers the loss, as at a minimum with a discontinuous or
@@ -1964,19 +2471,7 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
-def _lbfgs_not_converged(method, stop, steps, limit, dtype):
-    """The warning for an unconverged L-BFGS fit, saying why it stopped."""
-    head = f"fit(method={method!r}) did not converge"
-    if stop == "limit":
-        return f"{head} in {steps} steps, the step limit; raise max_steps."
-    hint = "; dtype='float64' can go further" if dtype == "float32" else ""
-    return (
-        f"{head}: it stopped after {steps} of {limit} steps, when a step no "
-        f"longer changed the parameters (the line search ran out of {dtype} "
-        f"precision{hint})."
-    )
-
-
+# deliberate: test seam (tests/test_fit_precondition.py)
 def _lbfgs(
     problem,
     z0,
@@ -2029,6 +2524,7 @@ def _lbfgs(
             size = limit  # little progress: the rest as one last round
 
 
+# deliberate: named step of the restart loop, with its own chunked state
 def _lbfgs_round(
     problem,
     z0,
@@ -2115,6 +2611,7 @@ def _lbfgs_round(
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per problem structure
 def _adam(problem, z0, scale, learning_rate, steps, metric=None):
     # With a metric, Adam runs in its scaled coordinates: its rms divisor
     # follows the size of the gradient, the metric the width of the
