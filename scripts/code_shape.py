@@ -17,8 +17,16 @@ Call sites are counted per module: the module's own ``Name`` uses, plus
 ``from x import _name`` and ``mod._name`` in other modules. A decorator that
 registers the function (``@f.defjvp``, ``@x.register``) counts as a use.
 ``--extra`` adds directories (default tests, docs, examples) grepped for each
-private name. ``--since REF`` lists only the private functions added since
-``REF`` that meet the inline rule: the guard of the audit.
+private name.
+
+``--since REF`` is the CI gate (rule 8 in AGENTS.md): it prints each private
+def (module-level, nested or method) that the tree adds relative to ``REF``
+and that is called exactly once in the package, and exits 1 if there is any.
+Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above;
+jit / custom_jvp / custom_vjp / ``.defjvp`` / ``.defvjp`` / ``.register``
+decorators; a def referenced as a value (a callback); a name tests import or take as an attribute
+(``tests/lint`` excluded). Calls count in the defining module plus other modules
+that import the name or call it as ``mod._name``.
 """
 
 import argparse
@@ -197,26 +205,159 @@ def _shingles(body):
     return set(zip(lines, lines[1:]))
 
 
-def _functions_at(ref):
-    """Names of the module-level functions of each module at git ``ref``."""
-    out = {}
-    for p in sorted(SRC.rglob("*.py")):
-        rel = str(p.relative_to(SRC))
-        git = subprocess.run(
-            ["git", "show", f"{ref}:src/virgil/{rel}"],
+_EXEMPT_DECORATOR = re.compile(
+    r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)(\(.*\))?$|\.register(\(.*\))?$"
+)
+
+
+def _private_defs(tree):
+    """``(qualname, node)`` of every private def: module-level, nested, method."""
+    out = []
+
+    def walk(node, prefix):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                q = prefix + child.name
+                if _private(child.name):
+                    out.append((q, child))
+                walk(child, q + ".")
+            elif isinstance(child, ast.ClassDef):
+                walk(child, prefix + child.name + ".")
+            else:
+                walk(child, prefix)
+
+    walk(tree, "")
+    return out
+
+
+def _module_uses(tree):
+    """Uses in one module: calls and value references, by plain name or attribute.
+
+    Attributes on ``self``/``cls`` stay in the module (``own``); others may
+    refer to another module's function (``ext``).
+    """
+    u = {k: collections.Counter() for k in ("name", "ext", "own")}
+    uv = {k: collections.Counter() for k in ("name", "ext", "own")}
+    called = set()
+
+    def add(table, n):
+        if isinstance(n, ast.Name):
+            table["name"][n.id] += 1
+        elif isinstance(n, ast.Attribute):
+            own = isinstance(n.value, ast.Name) and n.value.id in {
+                "self",
+                "cls",
+            }
+            table["own" if own else "ext"][n.attr] += 1
+
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            called.add(id(n.func))
+            add(u, n.func)
+    for n in ast.walk(tree):
+        if id(n) not in called:
+            add(uv, n)
+    imported = {
+        al.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom)
+        for al in n.names
+    }
+    return u, uv, imported
+
+
+def _reach(table, name, own, imported):
+    """Uses of ``name`` in a module: all of them if it defines ``name``, else
+    only those that can reach it (an import, or an attribute of a module)."""
+    if own:
+        return sum(table[k][name] for k in table)
+    return table["ext"][name] + (table["name"][name] if imported else 0)
+
+
+def _test_names(tests_text):
+    """Names tests import or take as attributes (``mod._name``), not locals."""
+    names = set()
+    for n in ast.walk(ast.parse(tests_text)):
+        if isinstance(n, ast.ImportFrom):
+            names.update(al.name for al in n.names)
+        elif isinstance(n, ast.Attribute):
+            names.add(n.attr)
+    return names
+
+
+def find_single_use(head, base, tests_text=""):
+    """Private defs in ``head`` (``{path: source}``) absent from ``base``, called once.
+
+    Calls are counted in the defining module plus those that can reach it from
+    other modules (an import of the name, or ``mod.name``). A def is new when
+    its qualified name is not in the same module of ``base`` (nor, for a module
+    absent from ``base``, in any), so moving a module is not an addition. Returns ``["path:line qualname", ...]``; see the module docstring
+    for the exemptions.
+    """
+    trees = {p: ast.parse(t) for p, t in head.items()}
+    old = {
+        (p, q) for p, t in base.items() for q, _ in _private_defs(ast.parse(t))
+    }
+    moved = {q for _, q in old}
+    uses = {p: _module_uses(t) for p, t in trees.items()}
+    tested = _test_names(tests_text)
+    found = []
+    for path, tree in trees.items():
+        lines = head[path].splitlines()
+        for q, node in _private_defs(tree):
+            name = node.name
+            if (path, q) in old or name in tested:
+                continue
+            if path not in base and q in moved:  # a moved module
+                continue
+            counts = [
+                (
+                    _reach(u, name, m == path, name in imp),
+                    _reach(uv, name, m == path, name in imp),
+                )
+                for m, (u, uv, imp) in uses.items()
+            ]
+            if sum(c for c, _ in counts) != 1 or sum(v for _, v in counts):
+                continue
+            if any(
+                _EXEMPT_DECORATOR.search(ast.unparse(d))
+                for d in node.decorator_list
+            ):
+                continue
+            top = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            near = (
+                lines[top - 2 : top - 1] + lines[node.lineno - 1 : node.lineno]
+            )
+            if any("# deliberate:" in x for x in near):
+                continue
+            found.append(f"{path}:{node.lineno} {q}")
+    return found
+
+
+def _read_tree(ref=None):
+    """``{path: source}`` of ``src/virgil`` on disk, or at git ``ref``."""
+    if ref is None:
+        return {
+            str(p.relative_to(SRC)): p.read_text() for p in SRC.rglob("*.py")
+        }
+    names = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", ref, "src/virgil"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return {
+        n[len("src/virgil/") :]: subprocess.run(
+            ["git", "show", f"{ref}:{n}"],
             cwd=ROOT,
             capture_output=True,
             text=True,
-        )
-        tree = (
-            ast.parse(git.stdout)
-            if git.returncode == 0
-            else ast.Module([], [])
-        )
-        out[rel] = {
-            n.name for n in tree.body if isinstance(n, ast.FunctionDef)
-        }
-    return out
+            check=True,
+        ).stdout
+        for n in names
+        if n.endswith(".py")
+    }
 
 
 def main():
@@ -226,6 +367,17 @@ def main():
     ap.add_argument("--max-stmts", type=int, default=3)
     ap.add_argument("--since")
     a = ap.parse_args()
+    if a.since:
+        tests = "\n".join(
+            p.read_text()
+            for p in (ROOT / "tests").rglob("*.py")
+            if "lint" not in p.parts
+        )
+        found = find_single_use(_read_tree(), _read_tree(a.since), tests)
+        print(f"single-use private defs added since {a.since}: {len(found)}")
+        for f in found:
+            print(f"  {f}")
+        raise SystemExit(bool(found))
     defs, modules = collect()
     extra = grep_extra(
         {d["name"] for d in defs},
@@ -235,13 +387,6 @@ def main():
         d["extra"] = extra[d["name"]]
     small = [d for d in defs if d["sites"] == 1 and d["stmts"] <= a.max_stmts]
     inline = [d for d in small if not d["decorators"] and not d["extra"]]
-    if a.since:
-        before = _functions_at(a.since)
-        print(f"single-use private functions added since {a.since}:")
-        for d in inline:
-            if d["name"] not in before.get(d["module"], set()):
-                print(f"  {d['module']}:{d['line']} {d['name']}")
-        return
     print(
         f"{'module':32s} {'lines':>6s} {'pub':>4s} {'priv':>5s} {'m_pub':>5s} {'m_priv':>6s}"
     )
