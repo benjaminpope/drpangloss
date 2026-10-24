@@ -43,21 +43,6 @@ __all__ = [
 ]
 
 
-def _warn_if_not_positive_definite(matrix, what):
-    """Warn if a concrete symmetric ``matrix`` has non-positive eigenvalues."""
-    value = _concrete(matrix)
-    if value is None or not onp.all(onp.isfinite(value)):
-        return
-    if onp.min(onp.linalg.eigvalsh(value)) <= 0.0:
-        warnings.warn(
-            f"The {what} is not positive definite (the point is not a "
-            "likelihood maximum, or a parameter is unconstrained); the "
-            "result has negative or infinite variances.",
-            RuntimeWarning,
-            stacklevel=external_stacklevel(),
-        )
-
-
 def _add_ridge(matrix, ridge):
     """``matrix + max(ridge, 0) * I``."""
     ident = np.eye(matrix.shape[-1], dtype=matrix.dtype)
@@ -87,7 +72,19 @@ def regularized_inverse(matrix, ridge=1e-10):
     covariance.
     """
     regularized = _add_ridge(np.asarray(matrix, dtype=float), ridge)
-    _warn_if_not_positive_definite(regularized, "matrix to invert")
+    value = _concrete(regularized)
+    if (
+        value is not None
+        and onp.all(onp.isfinite(value))
+        and onp.min(onp.linalg.eigvalsh(value)) <= 0.0
+    ):
+        warnings.warn(
+            "The matrix to invert is not positive definite (the point is not a "
+            "likelihood maximum, or a parameter is unconstrained); the "
+            "result has negative or infinite variances.",
+            RuntimeWarning,
+            stacklevel=external_stacklevel(),
+        )
     return np.linalg.inv(regularized)
 
 
@@ -229,6 +226,7 @@ def _unpack(values, shapes):
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per model structure
 def _neg_loglike_hessian(values, params, data, model, shapes=None):
     return hessian_matrix(
         lambda x: -loglike(_unpack(x, shapes), params, model, data),
@@ -237,6 +235,7 @@ def _neg_loglike_hessian(values, params, data, model, shapes=None):
 
 
 @eqx.filter_jit
+# deliberate: jit boundary, compiled once per model structure
 def _neg_loglike_curvature(values, idx, params, data, model, shapes=None):
     """``d² -log L / d values[idx]²``, the others held fixed."""
 

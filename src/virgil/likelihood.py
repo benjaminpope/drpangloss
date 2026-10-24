@@ -49,6 +49,7 @@ def _gain_jacobian(data, vis_prediction):
     return np.ones_like(vis_prediction)
 
 
+# deliberate: named step of the whitening, with its gain branch
 def _whiten_vis(data, prediction, resid, errors, gain_terms):
     """Whitened visibility residuals, their effective errors, and the log
     normalization of the marginalized gains (``Σ extra``, 0 without)."""
@@ -134,6 +135,7 @@ def _whiten_with_log_norm(
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
+# deliberate: named step of the whitening, with three return paths
 def _whiten_phases(data, resid, errors, offset_terms=None):
     """Whitened phase residuals, their effective errors and the closure
     offsets' log normalization (see ``_whiten_with_log_norm``)."""
@@ -652,16 +654,7 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-def _sample(numpyro, path, prior, flat=False):
-    """Sample the parameter at ``path`` (an angle vector at ``<path>_vec``, with the
-    angle recorded at ``path``); with ``flat``, in its flat coordinate.
-    """
-    if is_angle_vector(prior):
-        vector = numpyro.sample(vector_site(path), prior)
-        return numpyro.deterministic(path, vector_angle(vector))
-    return numpyro.sample(path, flat_sampled(prior) if flat else prior)
-
-
+# deliberate: test seam (tests/test_gains.py monkeypatches it)
 def _host_devices():
     """The number of local devices, without initializing the backend (by reading
     ``XLA_FLAGS`` first; several GPUs are not counted before the backend starts).
@@ -680,6 +673,7 @@ def _host_devices():
     return int(flag.group(1)) if flag else 1
 
 
+# deliberate: named check, keeps numpyro_model short
 def _warn_zero_size_for_parallel_chains(observations):
     """Warn if parallel chains would crash on zero-size arrays in the data (XLA's
     Shardy pass segfaults compiling a ``jax.pmap`` that captures one).
@@ -725,28 +719,22 @@ def numpyro_model(
     ----------
     model : SourceModel or callable
         A template whose leaves at the paths in ``priors`` are sampled, or a
-        function of the sampled values returning a
-        [`SourceModel`][virgil.models.SourceModel] or a list of them, one per
-        dataset (see [`build_model`][virgil.likelihood.build_model]).
+        function of the sampled values returning a model or one per dataset (see
+        [`build_model`][virgil.likelihood.build_model]).
     priors : dict[str, numpyro.distributions.Distribution]
-        Parameter path (or function argument name) to prior; each key is also the sample-site name. An
-        [`AngleVector`][virgil.angles.AngleVector] prior samples a 2-D vector
-        at ``"<path>_vec"`` and records the angle at ``"<path>"``.
+        Parameter path (or function argument name) to prior; each key is also
+        the sample-site name. An [`AngleVector`][virgil.angles.AngleVector]
+        prior samples a 2-D vector at ``"<path>_vec"`` and records the angle at
+        ``"<path>"``.
     data : OIData or sequence of OIData
         Gaussian log likelihood, added with ``numpyro.factor``; may be ``()``
         when ``likelihoods`` holds all the data.
-    regularizers : sequence, optional
-        Log-prior terms on the model, e.g. [`Centroid`][virgil.imaging.Centroid].
-    noise : dict or list of dict, optional
-        Priors on error and calibration terms, sites ``"noise.<term>"``
-        (``"noise[i].<term>"`` for a list); see
-        [common arguments](../common_arguments.md#noise).
-    likelihoods : sequence, optional
-        Extra data terms, sites ``"likelihood_<i>"``; see
-        [common arguments](../common_arguments.md#likelihoods).
+    regularizers, noise, likelihoods : optional
+        Log-prior terms (e.g. [`Centroid`][virgil.imaging.Centroid]); priors on
+        error and calibration terms (sites ``"noise.<term>"``); extra data terms
+        (sites ``"likelihood_<i>"``). See [common arguments](../common_arguments.md).
     flat_coordinates : bool, optional
-        Sample each prior in its flat coordinate (default ``False``; see
-        [common arguments](../common_arguments.md#flat_coordinates)). Pass the
+        Sample each prior in its flat coordinate (default ``False``); pass the
         same value to [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
     **options
         Fixed error terms and ``reject_unphysical``, passed to
@@ -781,10 +769,21 @@ def numpyro_model(
     likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
-        values = [
-            _sample(numpyro, path, priors[path], flat_coordinates)
-            for path in paths
-        ]
+        values = []
+        for path in paths:
+            prior = priors[path]
+            if is_angle_vector(prior):  # the vector at ``<path>_vec``
+                vector = numpyro.sample(vector_site(path), prior)
+                values.append(
+                    numpyro.deterministic(path, vector_angle(vector))
+                )
+            else:  # with ``flat_coordinates``, in the flat coordinate
+                values.append(
+                    numpyro.sample(
+                        path,
+                        flat_sampled(prior) if flat_coordinates else prior,
+                    )
+                )
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         fitted = dict(zip(paths, values))
@@ -828,20 +827,6 @@ def numpyro_model(
     return numpyro_fn
 
 
-def _check_mass_coordinates(model, mass):
-    """Raise if ``mass`` and ``model`` were built for other coordinates."""
-    wanted = getattr(model, "flat_coordinates", None)
-    given = getattr(mass, "flat_coordinates", None)
-    if wanted is not None and given is not None and wanted != given:
-        raise ValueError(
-            f"The mass matrix was computed with flat_coordinates={given}, "
-            f"but the numpyro model samples with flat_coordinates={wanted}: "
-            "its matrix is in the wrong coordinates, and with "
-            "adapt_mass_matrix=False it is never corrected. Pass the same "
-            "flat_coordinates to numpyro_model and gauss_newton_mass."
-        )
-
-
 def chain_init_params(model, starts, key=None, mass=None):
     """Initial parameters for numpyro's ``MCMC``, one chain per start.
 
@@ -883,7 +868,16 @@ def chain_init_params(model, starts, key=None, mass=None):
     from numpyro.infer.initialization import init_to_value
     from numpyro.infer.util import initialize_model
 
-    _check_mass_coordinates(model, mass)
+    wanted = getattr(model, "flat_coordinates", None)
+    given = getattr(mass, "flat_coordinates", None)
+    if wanted is not None and given is not None and wanted != given:
+        raise ValueError(
+            f"The mass matrix was computed with flat_coordinates={given}, "
+            f"but the numpyro model samples with flat_coordinates={wanted}: "
+            "its matrix is in the wrong coordinates, and with "
+            "adapt_mass_matrix=False it is never corrected. Pass the same "
+            "flat_coordinates to numpyro_model and gauss_newton_mass."
+        )
     starts = list(starts)
     if not starts:
         raise ValueError("starts must hold at least one dict of values.")
