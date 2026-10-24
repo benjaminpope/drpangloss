@@ -5,7 +5,13 @@ import pytest
 
 from virgil._utils import mas2rad
 from virgil.radio import ComplexVisData
-from virgil.radio_clean import _auto_mask, _gaussian, clean, fit_beam
+from virgil.radio_clean import (
+    _auto_mask,
+    _gaussian,
+    _minor_cycle,
+    clean,
+    fit_beam,
+)
 
 S = 40.0  # mas per pixel
 N = 97
@@ -219,3 +225,142 @@ def test_errors():
         clean(data, N, S, deconvolver="mtmfs")
     with pytest.raises(TypeError):
         clean(object(), N, S)
+
+
+def _sparse_track_data(n=65, scale=4.0):
+    """300 baselines x 80 hour angles (a poor, sidelobe-ridden beam) and three
+    point sources summing to 1 Jy, one near an edge (virgil#551)."""
+    rng = onp.random.default_rng(1)
+    bl = onp.exp(rng.uniform(onp.log(100), onp.log(1e4), (300, 2)))
+    bl *= rng.choice([-1, 1], (300, 2))
+    ha = onp.deg2rad(onp.linspace(-45, 45, 80))
+    dec, lat = onp.deg2rad(-37), onp.deg2rad(-23)
+    u = bl[:, :1] * onp.cos(ha) - bl[:, 1:] * onp.sin(lat) * onp.sin(ha)
+    v = bl[:, :1] * onp.sin(dec) * onp.sin(ha) + bl[:, 1:] * (
+        onp.sin(lat) * onp.sin(dec) * onp.cos(ha) + onp.cos(lat) * onp.cos(dec)
+    )
+    u, v = (u / 1.3e-3).ravel(), (v / 1.3e-3).ravel()
+    c = (n - 1) / 2
+    vis = onp.zeros(len(u), complex)
+    for flux, row, col in [
+        (0.5, c + 16, c - 13),
+        (0.3, c - 21, c + 21),
+        (0.2, c, c),
+    ]:
+        phase = u * (c - col) + v * (c - row)
+        vis += flux * onp.exp(-2j * onp.pi * phase * scale * mas2rad)
+    noise = 0.01 * (rng.normal(size=u.size) + 1j * rng.normal(size=u.size))
+    return ComplexVisData.from_arrays(u, v, vis + noise, 1e4, 230e9)
+
+
+def test_clean_converges_when_the_psf_reaches_beyond_half_the_image():
+    # the PSF sidelobes are 0.13 at lags 32-48 pixels of a 65-pixel image; a PSF
+    # window clipped at 32 left them in the minor-cycle residual and the
+    # components ran away (virgil#551)
+    data = _sparse_track_data()
+    sigma = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))
+    res = clean(data, 65, 4.0, niter=3000, threshold=3 * sigma)
+    peaks = [h["peak_residual"] for h in res.history]
+    assert res.stop == "threshold"
+    assert all(b < a for a, b in zip(peaks, peaks[1:]))
+    # compact sources, so the total flux is constrained despite the missing
+    # short spacings
+    assert res.model.sum() == pytest.approx(1.0, abs=0.01)
+
+
+def test_clean_stops_with_diverged_when_the_psf_window_is_too_small():
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=3000, threshold=1e-4, psfpatch=6)
+    assert res.stop == "diverged"
+    assert (
+        res.history[-1]["peak_residual"] < 10 * res.history[0]["peak_residual"]
+    )
+
+
+def test_the_returned_psf_and_restoring_beam_stay_image_sized():
+    # only the minor cycle's PSF is larger than the image
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=50, threshold=1e-3)
+    assert res.psf.shape == res.residual.shape == (65, 65)
+    assert res.beam == fit_beam(res.psf, 4.0)
+
+
+def test_one_component_clears_the_whole_residual_with_the_full_window():
+    # a corner source: the PSF window must reach the opposite corner
+    n, c = 65, 32
+    data = _sparse_track_data(n)
+    w = data._imaging_weights(
+        "natural", 0.5, 1 / (n * 4.0 * mas2rad), None, None, uvtaper=None
+    )
+    ones = onp.ones(len(data), complex)
+    phase = (data.u + data.v) * 25 * 4.0 * mas2rad
+    resid = data._adjoint(onp.exp(2j * onp.pi * phase), w, n, 4.0, 10**6)
+    full = data._adjoint(ones, w, 2 * n - 1, 4.0, 10**6)
+    kw = dict(
+        scales=[0],
+        mask=onp.ones((n, n), bool),
+        gain=1.0,
+        niter=5,
+        threshold=1e-4,
+        bias=0.6,
+        patch=256,
+    )
+    _, used, _ = _minor_cycle(resid, full, **kw)
+    assert used == 1
+    # the image-sized PSF leaves the far sidelobes behind (virgil#551)
+    _, used, _ = _minor_cycle(resid, full[c : c + n, c : c + n], **kw)
+    assert used > 1
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        dict(
+            deconvolver="multiscale",
+            scales_mas=[0, 16, 48],
+            usemask="auto-multithresh",
+        ),
+        dict(weighting="briggs", robust=0.0),
+    ],
+    ids=["multiscale-auto-multithresh", "briggs"],
+)
+def test_convergent_runs_are_not_stopped_as_diverged(kw):
+    data = _sparse_track_data()
+    sigma = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))
+    res = clean(data, 65, 4.0, niter=3000, threshold=3 * sigma, **kw)
+    assert res.stop == "threshold"
+    assert res.model.sum() == pytest.approx(1.0, abs=0.01)
+    # each major cycle that was followed by a minor cycle says why it ended
+    assert all(
+        h["minor_stop"] in ("threshold", "diverged", "niter")
+        for h in res.history[:-1]
+    )
+
+
+def test_the_minor_cycle_psf_agrees_with_the_image_sized_one():
+    # the 2N - 1 PSF is the same adjoint on a bigger grid: peak at its centre,
+    # equal to the image-sized PSF in the overlap to the NUFFT's accuracy
+    n = 65
+    data = _sparse_track_data(n)
+    w = data._imaging_weights(
+        "natural", 0.5, 1 / (n * 4.0 * mas2rad), None, None, uvtaper=None
+    )
+    ones = onp.ones(len(data), complex)
+    small = data._adjoint(ones, w, n, 4.0, 10**6)
+    large = data._adjoint(ones, w, 2 * n - 1, 4.0, 10**6)
+    assert onp.unravel_index(large.argmax(), large.shape) == (n - 1, n - 1)
+    overlap = large[n // 2 : n // 2 + n, n // 2 : n // 2 + n]
+    assert onp.abs(overlap - small).max() < 1e-5
+
+
+def test_the_returned_psf_and_beam_match_stored_reference_values():
+    # values from clean() on main, before the minor cycle got its own PSF
+    # (rel 1e-5: the NUFFT differs by about 3e-8 across platforms)
+    res = clean(_sparse_track_data(), 65, 4.0, niter=0)
+    assert res.beam == pytest.approx(
+        (49.0283201406404, 45.953434550067186, 130.89339973020668), rel=1e-5
+    )
+    assert res.psf.sum() == pytest.approx(570.4904774509284, rel=1e-5)
+    assert (res.psf**2).sum() == pytest.approx(137.9294823556553, rel=1e-5)
+    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, rel=1e-5)
+    assert res.psf[10, 50] == pytest.approx(0.11298123905795, rel=1e-5)

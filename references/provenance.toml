@@ -634,6 +634,17 @@ bibcode = "1980A&A....89..377C"
 verified = true
 verified_via = "ads"
 
+[ref.casa_tclean]
+authors = "CASA Team"
+year = 2022
+title = "CASAdocs, Synthesis Imaging: Iteration Control (stopping criteria and stop codes)"
+url = "https://casadocs.readthedocs.io/en/stable/notebooks/synthesis_imaging.html"
+verified = false
+verified_via = "none"
+used_in = ["virgil.radio_clean:clean", "virgil.radio_clean:_minor_cycle"]
+note = "Iteration Control, global stopping criteria: divergence 1 is (PeakRes - PrevPeakRes) / PrevPeakRes > 3.0, divergence 2 is (PeakRes - MinPeakRes) / MinPeakRes > 3.0, both over the whole image ignoring the mask (stop codes 5 and 6); minor cycle: (currentPeak - prevPeak) / prevPeak > 0.1, stop code 4 saying 'from minimum'. The page is inconsistent on the minor-cycle reference; virgil uses the running minimum per scale (virgil's choice). Read 2026-10-24"
+role = "compared"
+
 [ref.schwab1984]
 authors = "Schwab"
 year = 1984
