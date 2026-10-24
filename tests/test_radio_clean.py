@@ -219,3 +219,51 @@ def test_errors():
         clean(data, N, S, deconvolver="mtmfs")
     with pytest.raises(TypeError):
         clean(object(), N, S)
+
+
+def _sparse_track_data(n=65, scale=4.0):
+    """300 baselines x 80 hour angles (a poor, sidelobe-ridden beam) and three
+    point sources summing to 1 Jy, one near an edge (virgil#551)."""
+    rng = onp.random.default_rng(1)
+    bl = onp.exp(rng.uniform(onp.log(100), onp.log(1e4), (300, 2)))
+    bl *= rng.choice([-1, 1], (300, 2))
+    ha = onp.deg2rad(onp.linspace(-45, 45, 80))
+    dec, lat = onp.deg2rad(-37), onp.deg2rad(-23)
+    u = bl[:, :1] * onp.cos(ha) - bl[:, 1:] * onp.sin(lat) * onp.sin(ha)
+    v = bl[:, :1] * onp.sin(dec) * onp.sin(ha) + bl[:, 1:] * (
+        onp.sin(lat) * onp.sin(dec) * onp.cos(ha) + onp.cos(lat) * onp.cos(dec)
+    )
+    u, v = (u / 1.3e-3).ravel(), (v / 1.3e-3).ravel()
+    c = (n - 1) / 2
+    vis = onp.zeros(len(u), complex)
+    for flux, row, col in [
+        (0.5, c + 16, c - 13),
+        (0.3, c - 21, c + 21),
+        (0.2, c, c),
+    ]:
+        phase = u * (c - col) + v * (c - row)
+        vis += flux * onp.exp(-2j * onp.pi * phase * scale * mas2rad)
+    noise = 0.01 * (rng.normal(size=u.size) + 1j * rng.normal(size=u.size))
+    return ComplexVisData.from_arrays(u, v, vis + noise, 1e4, 230e9)
+
+
+def test_clean_converges_when_the_psf_reaches_beyond_half_the_image():
+    # the PSF sidelobes are 0.13 at lags 32-48 pixels of a 65-pixel image; a PSF
+    # window clipped at 32 left them in the minor-cycle residual and the
+    # components ran away (virgil#551)
+    data = _sparse_track_data()
+    sigma = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))
+    res = clean(data, 65, 4.0, niter=3000, threshold=3 * sigma)
+    peaks = [h["peak_residual"] for h in res.history]
+    assert res.stop == "threshold"
+    assert all(b < a for a, b in zip(peaks, peaks[1:]))
+    assert res.model.sum() == pytest.approx(1.0, abs=0.01)
+
+
+def test_clean_stops_with_diverged_when_the_psf_window_is_too_small():
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=3000, threshold=1e-4, psfpatch=6)
+    assert res.stop == "diverged"
+    assert (
+        res.history[-1]["peak_residual"] < 10 * res.history[0]["peak_residual"]
+    )

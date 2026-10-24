@@ -37,6 +37,13 @@ FWHM_TO_SIGMA = 1.0 / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))
 # ----------------------------------------------------------------------
 
 
+# CASA tclean's divergence tests: a minor cycle stops when its peak residual
+# exceeds its running minimum by 10 per cent, and the run stops when the
+# peak residual grows by 50 per cent over one major cycle.
+_MINOR_RISE = 1.1
+_MAJOR_RISE = 1.5
+
+
 def _gaussian(shape, centre, bmaj, bmin, pa_deg):
     """Peak-1 elliptical Gaussian; FWHM in pixels, ``pa_deg`` East of North."""
     rr, cc = onp.indices(shape, dtype=float)
@@ -201,7 +208,10 @@ def _minor_cycle(
     smoothed to the scale, ``H_ss`` the smoothed PSF's peak), ``gain * D_s /
     H_ss`` is added, and the cross-convolved PSF is subtracted from every
     smoothed residual in a window of half-width ``patch`` (Clark's
-    restriction). A single scale 0 is Högbom's CLEAN. Returns the components
+    restriction). A single scale 0 is Högbom's CLEAN. ``psf`` is the dirty
+    beam on a grid twice the image's, so a window reaches every pixel from
+    any component. The cycle also ends if its peak rises 10 per cent above
+    its running minimum (divergence). Returns the components
     ``(n_scales, n, n)`` and the iteration count.
     """
     scales = [float(s) for s in scales]
@@ -261,16 +271,18 @@ def _minor_cycle(
 
     tmax = tile_max(big)
     comps = onp.zeros((nsc, ny, nx))
-    done = 0
+    done, lowest = 0, onp.inf
     for done in range(1, niter + 1):
         s, ty, tx = onp.unravel_index(onp.argmax(tmax), tmax.shape)
         blk = big[s, ty * tile : (ty + 1) * tile, tx * tile : (tx + 1) * tile]
         iy, ix = onp.unravel_index(onp.argmax(onp.abs(blk)), blk.shape)
         y, x = ty * tile + iy, tx * tile + ix
         amp = big[s, y, x] / (norm[s] * hdiag[s])
-        if abs(amp * resp[s]) < threshold:
+        peak = abs(amp * resp[s])
+        if peak < threshold or peak > _MINOR_RISE * lowest:
             done -= 1
             break
+        lowest = min(lowest, peak)
         a = gain * amp
         comps[s, y, x] += a
         for t in range(nsc):
@@ -322,7 +334,9 @@ class RadioCleanResult:
         Minor-cycle iterations.
     stop : str
         ``"threshold"``, ``"nsigma"``, ``"niter"``, ``"time_limit"`` or
-        ``"no_progress"`` (no component above the cycle threshold).
+        ``"no_progress"`` (no component above the cycle threshold) or
+        ``"diverged"`` (the peak residual grew by 50 per cent over a major
+        cycle, as in ``tclean``).
     history : list of dict
         One entry per major cycle: iterations so far, peak residual (Jy/beam),
         rms (Jy/beam), model flux (Jy), wall time (s).
@@ -463,7 +477,8 @@ def clean(
     ``tclean``; see the [guide](../radio_clean.md) for the algorithm and the
     WSClean equivalents.
 
-    Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008).
+    Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008); the
+    divergence stops follow CASA ``tclean``'s iteration control (CASA Docs).
 
     Unlike [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
     visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
@@ -494,7 +509,8 @@ def clean(
     smallscalebias : float
         Preference for small scales, 0 to 1.
     psfpatch : int
-        Half-width in pixels of the PSF window subtracted per iteration.
+        Half-width in pixels of the PSF window subtracted per iteration; the
+        PSF is computed on twice the image, so up to ``npix - 1``.
     mask : array of bool, optional
         Where to clean; default the whole image.
     usemask : {"user", "auto-multithresh"}, sidelobethreshold, noisethreshold,
@@ -553,7 +569,12 @@ def clean(
         def dirty(a):
             return data._adjoint(a, w, npix, pixel_scale_mas, chunk_size)
 
-        psf = dirty(onp.ones(len(data), onp.complex128))
+        ones = onp.ones(len(data), onp.complex128)
+        psf = dirty(ones)
+        # twice the image: a component anywhere sees the PSF out to the far edge
+        psf2 = data._adjoint(
+            ones, w, 2 * npix - 1, pixel_scale_mas, chunk_size
+        )
         beam = fit_beam(psf, pixel_scale_mas, psfcutoff)
         lab, _ = ndimage.label(
             psf > 0
@@ -608,6 +629,12 @@ def clean(
             if peak < floor:
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
                 break
+            if (
+                len(history) > 1
+                and peak > _MAJOR_RISE * history[-2]["peak_residual"]
+            ):
+                stop = "diverged"
+                break
             if total >= niter:
                 break
             if time_limit and time.time() - t0 > time_limit:
@@ -618,7 +645,7 @@ def clean(
                 n_max = min(n_max, cycleniter)
             inc, n = _minor_cycle(
                 resid,
-                psf,
+                psf2,
                 scales,
                 use,
                 gain,

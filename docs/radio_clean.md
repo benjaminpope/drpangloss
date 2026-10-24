@@ -34,7 +34,8 @@ adjoint NUFFT into a dirty image in Jy/beam (so a point source of flux `F`
 peaks at `F`). No gridding of the data is done. Each **minor cycle** works
 on that residual image alone: it finds the peak, adds `gain` times it as a
 component, and subtracts the PSF there, in a window of `psfpatch` pixels
-(Clark 1980), until the peak falls below the *cycle threshold*
+(Clark 1980; the PSF is computed on twice the image, as in CASA, so the
+window can reach every pixel from any component), until the peak falls below the *cycle threshold*
 
 ```
 max(threshold, nsigma × rms,  f × peak),   f = clip(cyclefactor × sidelobe,
@@ -44,8 +45,10 @@ max(threshold, nsigma × rms,  f × peak),   f = clip(cyclefactor × sidelobe,
 (`sidelobe` is the PSF's highest sidelobe outside the main lobe), or
 `cycleniter` iterations. The sidelobes the window left out are removed by the
 next major cycle, which recomputes the residual exactly (Schwab 1984). The
-loop ends at `threshold`, `nsigma`, `niter` or `time_limit`; `RadioCleanResult.stop`
-says which.
+loop ends at `threshold`, `nsigma`, `niter`, `time_limit` or `diverged`;
+`RadioCleanResult.stop` says which. As in `tclean`, a minor cycle ends early
+if its peak rises 10 per cent above its running minimum, and the run stops
+(`"diverged"`) if the peak residual grows by 50 per cent over a major cycle.
 
 **Multi-scale** (Cornwell 2008): the components are Gaussians of the given
 `scales_mas` (FWHM in mas; 0 is a point). At each iteration the scale and
