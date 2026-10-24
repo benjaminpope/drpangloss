@@ -632,8 +632,9 @@ class FitResult:
         its path and its vector at ``"<path>_vec"``, so that ``values`` can
         start numpyro (``init_to_value``).
     info : dict
-        ``method``; ``converged`` (``None`` for Adam, which has no
-        convergence test); ``steps``; ``loss`` (the unscaled negative log
+        ``method``; ``converged`` (Adam: the ``ftol_abs`` stop fired or
+        ``grad_norm <= gtol``); ``steps``; ``loss_history`` (Adam: the unscaled
+        loss before each step); ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset and then per
         likelihood term (a Toeplitz term's, re-evaluated directly at the
         result); ``likelihood_forms``, what each term ran (``"toeplitz"``,
@@ -685,6 +686,9 @@ def fit(
     time_limit=None,
     progress=None,
     precondition=None,
+    adam_eps=1e-8,
+    ftol_abs=None,
+    ftol_window=100,
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
@@ -720,6 +724,11 @@ def fit(
         Further terms, e.g. [`PositionData.term`][virgil.orbits.PositionData.term];
         wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
         ``grad_norm``, ``elapsed``.
+    adam_eps, ftol_abs, ftol_window : float, float and int, optional
+        Adam only: ``optax.adam``'s ``eps``; and a plateau stop once at least
+        ``ftol_window`` steps have run, at the first step ``t`` where
+        ``loss[t - ftol_window] - loss[t] < ftol_abs`` (the unscaled loss;
+        off if ``None``).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
@@ -817,31 +826,29 @@ def fit(
                 precondition,
             )
         else:
-            if budget.chunked:
-                raise ValueError(
-                    "Adam runs exactly max_steps steps: set those, not "
-                    "time_limit or progress (which apply to 'lm' and "
-                    "'lbfgs')."
-                )
-            steps = limit = max_steps or 2000
+            limit = max_steps or 2000
             metric = None
             if precondition:
                 metric, stats = _metric(problem, z0, traced_scale)
                 rounds = [stats]
-            z = _adam(
+            z, steps, converged, stop, history = _adam_run(
                 problem,
                 z0,
                 traced_scale,
-                np.asarray(learning_rate),
-                steps,
+                (np.asarray(learning_rate), np.asarray(adam_eps)),
+                limit,
+                (ftol_abs, ftol_window),
+                budget,
                 None if metric is None else metric.normalized(),
             )
-            converged = None
         z = _recentre(problem, z)
         model = problem.build(z)
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
+        if method == "adam" and not converged:
+            converged = bool(grad_norm <= gtol)
+            stop = None if converged else stop or "limit"
         if not math.isfinite(loss) and converged is not False:
             # E.g. LM or Adam ending on NaN parameters.
             converged, stop = False, "non-finite"
@@ -866,6 +873,7 @@ def fit(
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
+            **({"loss_history": history} if method == "adam" else {}),
             "precondition": "diag"
             if precondition and method != "lm"
             else None,
@@ -2153,29 +2161,98 @@ def _lbfgs_round(
     return z, count, False, stop, tolerance, grad_norm
 
 
+_ADAM_CHUNK = 200
+
+
 @eqx.filter_jit
-def _adam(problem, z0, scale, learning_rate, steps, metric=None):
+def _adam(problem, carry, scale, rates, count, metric=None):
+    """``count`` (at most ``_ADAM_CHUNK``) Adam steps from ``carry = (z, state)``:
+    the new carry and the unscaled loss before each step (NaN after ``count``)."""
     # With a metric, Adam runs in its scaled coordinates: its rms divisor
     # follows the size of the gradient, the metric the width of the
     # coordinate, so each coordinate's step is the learning rate times its
     # width, the widest of its block taking the learning rate itself.
     # See design/fit_preconditioning.md.
     if metric is not None:
-        problem, start = (
-            _InMetric(problem, metric),
-            jax.tree.map(np.zeros_like, z0),
+        problem = _InMetric(problem, metric)
+    optimizer = optax.adam(rates[0], eps=rates[1])
+    value_and_grad = jax.value_and_grad(_scaled_loss(problem, scale))
+
+    def step(i, state):
+        (z, opt), losses = state
+        loss, grad = value_and_grad(z)
+        updates, opt = optimizer.update(grad, opt, z)
+        return (optax.apply_updates(z, updates), opt), losses.at[i].set(
+            loss * scale
         )
-    else:
-        start = z0
-    optimizer = optax.adam(learning_rate)
-    grad = jax.grad(_scaled_loss(problem, scale))
 
-    def step(carry, _):
-        z, state = carry
-        updates, state = optimizer.update(grad(z), state, z)
-        return (optax.apply_updates(z, updates), state), None
+    losses = np.full(_ADAM_CHUNK, np.nan, dtype=np.result_type(scale))
+    return jax.lax.fori_loop(0, count, step, (carry, losses))
 
-    (z, _), _ = jax.lax.scan(
-        step, (start, optimizer.init(start)), None, length=steps
+
+# deliberate: the chunk loop of ``fit``, kept out of its already long body
+def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
+    """``(z, steps, converged, stop, loss_history)`` of Adam in jitted chunks.
+
+    ``converged`` is ``True`` if the plateau stop ``ftol = (abs, window)``
+    fired, else ``None`` (``fit`` tests the gradient); ``stop`` is ``"limit"``,
+    ``"time"`` or ``"non-finite"`` or ``None``.
+    """
+    ftol_abs, window = ftol
+    start = z0 if metric is None else jax.tree.map(np.zeros_like, z0)
+    carry, history, steps, stop = (
+        (start, optax.adam(0.0).init(start)),
+        [],
+        0,
+        None,
     )
-    return z if metric is None else metric.to_z(z)
+    while steps < limit:
+        count = min(_ADAM_CHUNK, limit - steps)
+        new, losses = _adam(
+            problem, carry, scale, rates, np.asarray(count), metric
+        )
+        new_losses = onp.asarray(losses)[:count] + float(problem.loss_constant)
+        losses_so_far = onp.concatenate([*history, new_losses])
+        if ftol_abs is not None:
+            # exact: the first step t at which the plateau test holds
+            t = onp.arange(max(window, steps), steps + count)
+            gap = losses_so_far[t - window] - losses_so_far[t]
+            hit = onp.flatnonzero(gap < ftol_abs)
+            if hit.size:
+                fired = int(t[hit[0]])
+                if fired > steps:  # re-run the chunk's first steps only
+                    carry, _ = _adam(
+                        problem,
+                        carry,
+                        scale,
+                        rates,
+                        np.asarray(fired - steps),
+                        metric,
+                    )
+                return (
+                    carry[0] if metric is None else metric.to_z(carry[0]),
+                    fired,
+                    True,
+                    None,
+                    losses_so_far[:fired],
+                )
+        carry, steps = new, steps + count
+        history.append(new_losses)
+        if not onp.isfinite(new_losses[-1]):
+            stop = "non-finite"
+            break
+        nan = float("nan")  # the gradient norm is not tracked per chunk
+        if (
+            budget.check(steps, lambda: (float(new_losses[-1]), nan))
+            and steps < limit
+        ):
+            stop = "time"
+            break
+    z = carry[0] if metric is None else metric.to_z(carry[0])
+    return (
+        z,
+        steps,
+        None,
+        stop,
+        onp.concatenate(history) if history else onp.zeros(0),
+    )

@@ -25,20 +25,29 @@ PRIORS = {
 }
 
 
-@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_with_progress_compiles_once(method, monkeypatch):
     # Tiny chunks so that each method runs several chunk-to-chunk rounds.
     monkeypatch.setattr(virgil.fitting, "_LM_CHUNK", 2)
     monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", 3)
+    monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 3)
     data = OIData(ami_grid_record(pitch_m=0.5)).with_model(
         BinaryModelCartesian(150.0, -80.0, 0.02), key=jax.random.PRNGKey(0)
     )
     start = BinaryModelCartesian(60.0, -20.0, 0.005)
     reports = []
-    fit(start, PRIORS, data, method=method, progress=reports.append)
+    options = {"max_steps": 10} if method == "adam" else {}
+    fit(start, PRIORS, data, method=method, progress=reports.append, **options)
     assert len(reports) > 1  # several chunks ran
     with count_compiles() as compiles:
-        fit(start, PRIORS, data, method=method, progress=reports.append)
+        fit(
+            start,
+            PRIORS,
+            data,
+            method=method,
+            progress=reports.append,
+            **options,
+        )
     assert compiles == []
 
 

@@ -865,3 +865,30 @@ def test_auto_reports_why_it_fell_back(auto_always):
     )
     _, form = data.term(scene, nuis, chi2="toeplitz").resolve(init, False)
     assert form == "toeplitz"  # explicit requests are not capped
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_adam_with_auto_picks_toeplitz_and_matches_direct(auto_always):
+    data, nuis, scene, init = _auto(npix=6, n=400)
+    priors = nuis.priors()
+    priors["eta"] = dist.Normal(0.0, 1.0)
+    out = {}
+    for chi2 in ("auto", "direct"):
+        out[chi2] = fit(
+            lambda **v: scene(v),
+            priors,
+            (),
+            likelihoods=[data.term(scene, nuis, chi2=chi2)],
+            init=dict(init),
+            method="adam",
+            max_steps=30,
+        )
+    assert out["auto"].info["likelihood_forms"] == ["toeplitz"]
+    assert out["auto"].info["loss"] == pytest.approx(
+        out["direct"].info["loss"], rel=1e-10
+    )
+    onp.testing.assert_allclose(
+        out["auto"].info["loss_history"],
+        out["direct"].info["loss_history"],
+        rtol=1e-10,
+    )
