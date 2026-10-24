@@ -228,6 +228,7 @@ class GainModes(eqx.Module):
         return False
 
 
+# deliberate: test seam: unit-tested directly
 def _frames_and_stations(data, need_stations):
     """Frame and station pair of each visibility observable."""
     if data.frame is None:
@@ -377,6 +378,7 @@ def _mode_blocks(touched, n_item):
     return list(by_label.values())
 
 
+# deliberate: test seam: unit-tested directly
 def _pack(columns, groups, widths, frame):
     """Sort columns into blocks within frames (connected by shared rows,
     padded to a common size) and columns spanning frames."""
@@ -676,11 +678,7 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
                 columns.append((gid, rows, m[rows]))
     if not columns:
         raise ValueError("No offsets: give at least one group or mode.")
-    return _pack_offsets(cp_noise, columns, names, widths)
-
-
-def _pack_offsets(cp_noise, columns, names, widths):
-    """Group closure-phase modes into blocks of the groups they touch."""
+    # group the closure-phase modes into blocks of the groups they touch
     cp_groups, cp_mask = (
         onp.asarray(cp_noise.groups),
         onp.asarray(cp_noise.mask),
