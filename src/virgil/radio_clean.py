@@ -191,7 +191,7 @@ def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
 # ----------------------------------------------------------------------
 
 
-# deliberate: the 100-line minor cycle is tested apart from the major loop
+# deliberate: the ~100-line minor cycle reads better apart from the major loop
 def _minor_cycle(
     residual, psf, scales, mask, gain, niter, threshold, bias, patch
 ):
