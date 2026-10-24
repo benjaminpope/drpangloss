@@ -57,7 +57,7 @@ def read_oifits(
 
     Prefers `OI_VIS2` over amplitudes and `OI_T3` over absolute phases; see
     [OIFITS files](../oifits_files.md) for the tables read and how closure
-    phases are matched to baselines.
+    phases are matched.
     Source: Pauls et al. (2005), [references](../references.md#pauls2005);
     Duvert et al. (2015), [references](../references.md#duvert2017).
 
@@ -75,19 +75,18 @@ def read_oifits(
         Give every sample of a frame the frame's mean `MJD` (default), or
         keep each row's own.
     extras : sequence of str, optional
-        Further observables: any of `"flux"`, `"nflux"`, `"t3amp"`,
-        `"visamp"`, `"visphi"` (see [extras](../oifits_files.md#extras)).
+        Any of `"flux"`, `"nflux"`, `"t3amp"`, `"visamp"`, `"visphi"` (see
+        [extras](../oifits_files.md#extras)).
     bandwidth : bool, optional
         Also return each sample's `EFF_BAND` as `"bandwidth"`.
 
     Returns
     -------
     dict
-        Flat per-sample arrays `u`, `v`, `wavel` (metres), `vis`/`d_vis`
-        (V², or amplitudes if `v2_flag` is False; one-sigma errors, with
-        `vis_flag`, True = bad), `phi`/`d_phi` (radians, with `phi_flag`), the
-        closure-phase indices `i_cps1`/`i_cps2`/`i_cps3`, `cp_flag`, `mjd` and
-        `frame`, and a dict under each requested extra's name.
+        Flat per-sample `u`, `v`, `wavel` (metres), `vis`/`d_vis` (V², or
+        amplitudes if `v2_flag` is False; one-sigma errors; `vis_flag` True = bad),
+        `phi`/`d_phi` (radians, with `phi_flag`), `i_cps1`/`i_cps2`/`i_cps3`,
+        `cp_flag`, `v2_flag`, `mjd`, `frame`, and a dict per requested extra.
 
     Raises
     ------
@@ -95,7 +94,15 @@ def read_oifits(
         For several targets or instruments without `target`/`insname`,
         differential or correlated-flux data, or unusable `OI_T3` coordinates.
     """
-    extras = _check_extras(extras)
+    extras = (extras,) if isinstance(extras, str) else tuple(extras)
+    unknown = sorted(set(extras) - set(EXTRAS))
+    if unknown:
+        raise ValueError(f"Unknown extras {unknown}; choose from {EXTRAS}.")
+    if "flux" in extras and "nflux" in extras:
+        raise ValueError(
+            "Read OI_FLUX either as 'flux' (up to a grey scale) or as "
+            "'nflux' (normalized to its continuum), not both."
+        )
     # An HDUList is itself a list (of HDUs): only other sequences are lists
     # of files.
     if isinstance(source, (list, tuple)) and not isinstance(
@@ -134,21 +141,6 @@ def read_oifits(
 EXTRAS = ("flux", "nflux", "t3amp", "visamp", "visphi")
 
 
-def _check_extras(extras):
-    if isinstance(extras, str):
-        extras = (extras,)
-    extras = tuple(extras)
-    unknown = sorted(set(extras) - set(EXTRAS))
-    if unknown:
-        raise ValueError(f"Unknown extras {unknown}; choose from {EXTRAS}.")
-    if "flux" in extras and "nflux" in extras:
-        raise ValueError(
-            "Read OI_FLUX either as 'flux' (up to a grey scale) or as "
-            "'nflux' (normalized to its continuum), not both."
-        )
-    return extras
-
-
 def _extname(hdu):
     return str(hdu.header.get("EXTNAME", "")).strip().upper()
 
@@ -167,6 +159,7 @@ def _insname(hdu):
     return None if value is None else str(value).strip()
 
 
+# deliberate: a test seam (tests build tables directly)
 def _collect_tables(hdul):
     """Group the OI_* tables of ``hdul`` by EXTNAME, in file order."""
     tables = {}
@@ -180,6 +173,7 @@ def _collect_tables(hdul):
 _INSNAME_TABLES = ("OI_WAVELENGTH", "OI_VIS", "OI_VIS2", "OI_T3", "OI_FLUX")
 
 
+# deliberate: a test seam (tests call it on hand-built tables)
 def _select_insname(tables, insname):
     """Keep the tables with the chosen ``INSNAME`` (see ``read_oifits``)."""
     names = sorted(
@@ -223,51 +217,6 @@ def _select_insname(tables, insname):
     return {extname: hdus for extname, hdus in selected.items() if hdus}
 
 
-def _wavelength_tables(tables):
-    wavelengths = {}
-    for hdu in tables.get("OI_WAVELENGTH", []):
-        wavelengths[_insname(hdu)] = onp.asarray(
-            hdu.data["EFF_WAVE"], dtype=float
-        ).reshape(-1)
-    if not wavelengths:
-        raise ValueError("OIFITS file has no OI_WAVELENGTH table.")
-    return wavelengths
-
-
-def _channel_widths(tables):
-    """``{EFF_WAVE: EFF_BAND}`` over the OI_WAVELENGTH tables (metres)."""
-    widths = {}
-    for hdu in tables.get("OI_WAVELENGTH", []):
-        if "EFF_BAND" not in hdu.columns.names or hdu.header.get("BANDEST"):
-            continue  # BANDEST: written as an estimate, not a measured width
-        wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
-        band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
-        for w, b in zip(wave.tolist(), band.tolist()):
-            if widths.setdefault(w, b) != b:
-                raise ValueError(
-                    f"Two OI_WAVELENGTH channels at {w:.6g} m have different "
-                    "EFF_BAND values (several instruments?): choose one "
-                    "with insname=."
-                )
-    return widths
-
-
-def _sample_bandwidth(record, tables):
-    """Per-sample ``EFF_BAND`` of the record, or ``None`` if it is not given.
-
-    Samples are matched to channels by their wavelength. Files that give
-    no width, or only zeros, have no bandwidth, so smearing stays off.
-    """
-    widths = _channel_widths(tables)
-    wavel = onp.broadcast_to(
-        onp.asarray(record["wavel"]), onp.shape(record["u"])
-    )
-    band = onp.array([widths.get(w, 0.0) for w in wavel.tolist()])
-    if not onp.all(onp.isfinite(band)) or not onp.any(band > 0):
-        return None
-    return band
-
-
 def _table_wavelengths(hdu, wavelengths):
     ins = _insname(hdu)
     if ins in wavelengths:
@@ -280,45 +229,6 @@ def _table_wavelengths(hdu, wavelengths):
         f"{_extname(hdu)} table has INSNAME {ins!r}, which matches none of "
         f"the OI_WAVELENGTH tables {sorted(map(str, wavelengths))}."
     )
-
-
-def _target_ids(tables, names):
-    ids = set()
-    for name in names:
-        for hdu in tables.get(name, []):
-            if "TARGET_ID" in hdu.columns.names:
-                ids.update(int(i) for i in onp.asarray(hdu.data["TARGET_ID"]))
-    return ids
-
-
-def _select_target(tables, target, data_names):
-    """Return the TARGET_ID to keep, or ``None`` to keep every row."""
-    target_names = {}
-    for hdu in tables.get("OI_TARGET", []):
-        for tid, name in zip(hdu.data["TARGET_ID"], hdu.data["TARGET"]):
-            target_names[int(tid)] = str(name).strip()
-    ids = _target_ids(tables, data_names)
-    if target is None:
-        if len(ids) > 1:
-            listing = {i: target_names.get(i, "?") for i in sorted(ids)}
-            raise ValueError(
-                f"OIFITS file contains data on several targets {listing}; "
-                "choose one with target=<name or TARGET_ID>."
-            )
-        return None
-    if isinstance(target, str):
-        matches = [
-            tid
-            for tid, name in target_names.items()
-            if name.lower() == target.strip().lower()
-        ]
-        if not matches:
-            raise ValueError(
-                f"Target {target!r} is not in OI_TARGET "
-                f"({sorted(target_names.values())})."
-            )
-        return matches[0]
-    return int(target)
 
 
 def _row_mask(hdu, target_id):
@@ -520,6 +430,7 @@ def _amptyp(hdu):
     return str(hdu.header.get("AMPTYP", "absolute")).strip().lower()
 
 
+# deliberate: a named step: the visibility table and its baseline lookup
 def _read_visibilities(tables, wavelengths, target_id, extras=()):
     if "OI_VIS2" in tables:
         names = ("OI_VIS2", "VIS2DATA", "VIS2ERR")
@@ -528,7 +439,59 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
         names = ("OI_VIS", "VISAMP", "VISAMPERR")
         v2_flag = False
     elif "OI_T3" in tables:
-        return _baselines_from_triangles(tables, wavelengths, target_id)
+        # Closure-phase-only file: flagged baseline samples from the T3 legs.
+        u, v, wavel = [], [], []
+        lookup = _BaselineLookup()
+        start = 0
+        for hdu in tables["OI_T3"]:
+            wave = _table_wavelengths(hdu, wavelengths)
+            nwave = wave.size
+            mask = _row_mask(hdu, target_id)
+            u1, v1 = (
+                _column(hdu, "U1COORD", mask),
+                _column(hdu, "V1COORD", mask),
+            )
+            u2, v2 = (
+                _column(hdu, "U2COORD", mask),
+                _column(hdu, "V2COORD", mask),
+            )
+            sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
+            mjd = _mjd(hdu, mask)
+            time = _time(hdu, mask)
+            ins = _lookup_key(hdu)
+            for row, (a, b, c) in enumerate(sta_index):
+                legs = (
+                    ((a, b), u1[row], v1[row]),
+                    ((b, c), u2[row], v2[row]),
+                    ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
+                )
+                for pair, uu, vv in legs:
+                    if (
+                        lookup.find(ins, pair, mjd[row], time=time[row])
+                        is not None
+                    ):
+                        continue
+                    # Each T3 row carries its own (u, v), so rows of different
+                    # times stay separate samples: no exposure window here.
+                    lookup.add(
+                        ins, pair, mjd[row], 0.0, start, nwave, wave, time[row]
+                    )
+                    start += nwave
+                    u.append(onp.full(nwave, uu))
+                    v.append(onp.full(nwave, vv))
+                    wavel.append(wave)
+
+        n = start
+        record = {
+            "u": onp.concatenate(u),
+            "v": onp.concatenate(v),
+            "wavel": onp.concatenate(wavel),
+            "vis": onp.full(n, onp.nan),
+            "d_vis": onp.full(n, onp.nan),
+            "vis_flag": onp.ones(n, dtype=bool),
+            "v2_flag": True,
+        }
+        return record, lookup
     else:
         raise ValueError("OIFITS file has no OI_VIS2, OI_VIS or OI_T3 table.")
     extname, value_col, error_col = names
@@ -604,56 +567,7 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
     return record, lookup
 
 
-def _baselines_from_triangles(tables, wavelengths, target_id):
-    """Flagged baseline samples for closure-phase-only files, from T3 legs."""
-    u, v, wavel = [], [], []
-    lookup = _BaselineLookup()
-    start = 0
-    for hdu in tables["OI_T3"]:
-        wave = _table_wavelengths(hdu, wavelengths)
-        nwave = wave.size
-        mask = _row_mask(hdu, target_id)
-        u1, v1 = _column(hdu, "U1COORD", mask), _column(hdu, "V1COORD", mask)
-        u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
-        sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
-        mjd = _mjd(hdu, mask)
-        time = _time(hdu, mask)
-        ins = _lookup_key(hdu)
-        for row, (a, b, c) in enumerate(sta_index):
-            legs = (
-                ((a, b), u1[row], v1[row]),
-                ((b, c), u2[row], v2[row]),
-                ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
-            )
-            for pair, uu, vv in legs:
-                if (
-                    lookup.find(ins, pair, mjd[row], time=time[row])
-                    is not None
-                ):
-                    continue
-                # Each T3 row carries its own (u, v), so rows of different
-                # times stay separate samples: no exposure window here.
-                lookup.add(
-                    ins, pair, mjd[row], 0.0, start, nwave, wave, time[row]
-                )
-                start += nwave
-                u.append(onp.full(nwave, uu))
-                v.append(onp.full(nwave, vv))
-                wavel.append(wave)
-
-    n = start
-    record = {
-        "u": onp.concatenate(u),
-        "v": onp.concatenate(v),
-        "wavel": onp.concatenate(wavel),
-        "vis": onp.full(n, onp.nan),
-        "d_vis": onp.full(n, onp.nan),
-        "vis_flag": onp.ones(n, dtype=bool),
-        "v2_flag": True,
-    }
-    return record, lookup
-
-
+# deliberate: a named step: the T3 coordinate error messages, away from the leg loop
 def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
     """Refuse T3 leg coordinates that are NaN, zero or inconsistent with V2."""
     uu, vv = legs_uv[k]
@@ -681,6 +595,7 @@ def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
             )
 
 
+# deliberate: a named step: matches T3 legs to samples and appends the unmatched
 def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
@@ -795,6 +710,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     }
 
 
+# deliberate: a named step: the OI_VIS phase branch of the reader
 def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     phi = onp.zeros(n_samples)
     d_phi = onp.ones(n_samples)
@@ -848,24 +764,130 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     }
 
 
+# deliberate: a named step: the extra observables, read after the main record
 def _read_extras(tables, wavelengths, target_id, lookup, record, extras):
     """Read the requested extra observables into ``record`` (in place)."""
     if not extras:
         return
     new = _NewSamples(record)
     if "t3amp" in extras:
-        record["t3amp"] = _read_t3amp(tables, wavelengths, target_id)
+        # T3AMP per closure phase, in the order of ``_read_closure_phases``.
+        if "OI_T3" not in tables:
+            raise ValueError("extras 't3amp' needs an OI_T3 table.")
+        out = {"value": [], "error": [], "flag": []}
+        for hdu in tables["OI_T3"]:
+            nwave = _table_wavelengths(hdu, wavelengths).size
+            mask = _row_mask(hdu, target_id)
+            for column in ("T3AMP", "T3AMPERR"):
+                if column not in hdu.columns.names:
+                    raise ValueError(f"OI_T3 table has no {column} column.")
+            values = _column(hdu, "T3AMP", mask, nwave)
+            errors = _column(hdu, "T3AMPERR", mask, nwave)
+            flag = _flags(hdu, mask, nwave, values, errors)
+            for key, x in zip(out, (values, errors, flag)):
+                out[key].append(x.reshape(-1))
+        record["t3amp"] = {key: onp.concatenate(x) for key, x in out.items()}
     if "visamp" in extras:
-        record["visamp"] = _read_visamp(
-            tables, wavelengths, target_id, lookup, new
-        )
+        if "OI_VIS" not in tables:
+            raise ValueError("extras 'visamp' needs an OI_VIS table.")
+        out = {"sample": [], "value": [], "error": [], "flag": []}
+        kinds = set()
+        for hdu, samples, _, values, errors, flag in _vis_rows(
+            tables, wavelengths, target_id, lookup, new, "VISAMP", "VISAMPERR"
+        ):
+            amptyp = _amptyp(hdu)
+            if amptyp == "absolute" and "OI_VIS2" not in tables:
+                raise ValueError(
+                    "VISAMP is already the visibility observable of this "
+                    "file (it has no OI_VIS2); do not also read it as an "
+                    "extra."
+                )
+            if amptyp not in ("absolute", "correlated flux"):
+                raise ValueError(
+                    f"VISAMP with AMPTYP = {amptyp!r} is not supported yet; "
+                    "'absolute' and 'correlated flux' are."
+                )
+            kinds.add(amptyp)
+            for key, x in zip(out, (samples, values, errors, flag)):
+                out[key].append(x.reshape(-1))
+        if len(kinds) != 1:
+            raise ValueError(
+                "extras 'visamp' needs OI_VIS tables of one AMPTYP, not "
+                f"{sorted(kinds) or 'none'}."
+            )
+        record["visamp"] = {key: onp.concatenate(x) for key, x in out.items()}
+        record["visamp"]["amptyp"] = kinds.pop()
     if "visphi" in extras:
-        record["visphi"] = _read_visphi(
-            tables, wavelengths, target_id, lookup, new
-        )
+        if not any(
+            "VISPHI" in h.columns.names for h in tables.get("OI_VIS", [])
+        ):
+            raise ValueError(
+                "extras 'visphi' needs an OI_VIS table with VISPHI."
+            )
+        out = {"sample": [], "value": [], "error": [], "flag": [], "row": []}
+        n_row = 0
+        for _, samples, sign, values, errors, flag in _vis_rows(
+            tables, wavelengths, target_id, lookup, new, "VISPHI", "VISPHIERR"
+        ):
+            rows = n_row + onp.arange(samples.shape[0])
+            n_row += samples.shape[0]
+            parts = (
+                samples,
+                sign[:, None] * values,
+                errors,
+                flag,
+                onp.broadcast_to(rows[:, None], samples.shape),
+            )
+            for key, x in zip(out, parts):
+                out[key].append(onp.asarray(x).reshape(-1))
+        record["visphi"] = {key: onp.concatenate(x) for key, x in out.items()}
     for kind in ("flux", "nflux"):
-        if kind in extras:
-            record[kind] = _read_flux(tables, wavelengths, target_id)
+        if kind not in extras:
+            continue
+        # OI_FLUX spectra, one sample per (row, channel).
+        if "OI_FLUX" not in tables:
+            raise ValueError("extras 'flux'/'nflux' need an OI_FLUX table.")
+        keys = ("wavel", "value", "error", "flag", "mjd", "row", "station")
+        out = {key: [] for key in keys}
+        n_row = 0
+        for hdu in tables["OI_FLUX"]:
+            mask = _row_mask(hdu, target_id)
+            if not onp.any(mask):
+                continue
+            wave = _table_wavelengths(hdu, wavelengths)
+            nwave = wave.size
+            names = hdu.columns.names
+            value_col = "FLUXDATA" if "FLUXDATA" in names else "FLUX"
+            if value_col not in names or "FLUXERR" not in names:
+                raise ValueError(
+                    "OI_FLUX table has no FLUXDATA (or FLUX) and FLUXERR "
+                    "columns."
+                )
+            values = _column(hdu, value_col, mask, nwave)
+            errors = _column(hdu, "FLUXERR", mask, nwave)
+            flag = _flags(hdu, mask, nwave, values, errors)
+            nrow = values.shape[0]
+            if "STA_INDEX" in names:
+                station = _column(hdu, "STA_INDEX", mask, dtype=int)
+                station = station.reshape(-1)
+            else:
+                station = onp.full(nrow, -1)
+            rows = n_row + onp.arange(nrow)
+            n_row += nrow
+            parts = (
+                onp.tile(wave, nrow),
+                values,
+                errors,
+                flag,
+                onp.repeat(_mjd(hdu, mask), nwave),
+                onp.repeat(rows, nwave),
+                onp.repeat(station[:nrow], nwave),
+            )
+            for key, x in zip(out, parts):
+                out[key].append(onp.asarray(x).reshape(-1))
+        if not out["value"]:
+            raise ValueError("No OI_FLUX rows for this target.")
+        record[kind] = {key: onp.concatenate(x) for key, x in out.items()}
     new.finish()
 
 
@@ -961,169 +983,52 @@ def _vis_rows(tables, wavelengths, target_id, lookup, new, value, error):
         yield hdu, samples, sign, values, errors, flag
 
 
-def _read_visamp(tables, wavelengths, target_id, lookup, new):
-    if "OI_VIS" not in tables:
-        raise ValueError("extras 'visamp' needs an OI_VIS table.")
-    out = {"sample": [], "value": [], "error": [], "flag": []}
-    kinds = set()
-    for hdu, samples, _, values, errors, flag in _vis_rows(
-        tables, wavelengths, target_id, lookup, new, "VISAMP", "VISAMPERR"
-    ):
-        amptyp = _amptyp(hdu)
-        if amptyp == "absolute" and "OI_VIS2" not in tables:
-            raise ValueError(
-                "VISAMP is already the visibility observable of this file "
-                "(it has no OI_VIS2); do not also read it as an extra."
-            )
-        if amptyp not in ("absolute", "correlated flux"):
-            raise ValueError(
-                f"VISAMP with AMPTYP = {amptyp!r} is not supported yet; "
-                "'absolute' and 'correlated flux' are."
-            )
-        kinds.add(amptyp)
-        for key, x in zip(out, (samples, values, errors, flag)):
-            out[key].append(x.reshape(-1))
-    if len(kinds) != 1:
-        raise ValueError(
-            "extras 'visamp' needs OI_VIS tables of one AMPTYP, not "
-            f"{sorted(kinds) or 'none'}."
-        )
-    record = {key: onp.concatenate(x) for key, x in out.items()}
-    record["amptyp"] = kinds.pop()
-    return record
-
-
-def _read_visphi(tables, wavelengths, target_id, lookup, new):
-    if not any("VISPHI" in h.columns.names for h in tables.get("OI_VIS", [])):
-        raise ValueError("extras 'visphi' needs an OI_VIS table with VISPHI.")
-    out = {"sample": [], "value": [], "error": [], "flag": [], "row": []}
-    n_row = 0
-    for _, samples, sign, values, errors, flag in _vis_rows(
-        tables, wavelengths, target_id, lookup, new, "VISPHI", "VISPHIERR"
-    ):
-        rows = n_row + onp.arange(samples.shape[0])
-        n_row += samples.shape[0]
-        parts = (
-            samples,
-            sign[:, None] * values,
-            errors,
-            flag,
-            onp.broadcast_to(rows[:, None], samples.shape),
-        )
-        for key, x in zip(out, parts):
-            out[key].append(onp.asarray(x).reshape(-1))
-    return {key: onp.concatenate(x) for key, x in out.items()}
-
-
-def _read_t3amp(tables, wavelengths, target_id):
-    """``T3AMP`` per closure phase, in the order of ``_read_closure_phases``."""
-    if "OI_T3" not in tables:
-        raise ValueError("extras 't3amp' needs an OI_T3 table.")
-    out = {"value": [], "error": [], "flag": []}
-    for hdu in tables["OI_T3"]:
-        nwave = _table_wavelengths(hdu, wavelengths).size
-        mask = _row_mask(hdu, target_id)
-        for column in ("T3AMP", "T3AMPERR"):
-            if column not in hdu.columns.names:
-                raise ValueError(f"OI_T3 table has no {column} column.")
-        values = _column(hdu, "T3AMP", mask, nwave)
-        errors = _column(hdu, "T3AMPERR", mask, nwave)
-        flag = _flags(hdu, mask, nwave, values, errors)
-        for key, x in zip(out, (values, errors, flag)):
-            out[key].append(x.reshape(-1))
-    return {key: onp.concatenate(x) for key, x in out.items()}
-
-
-def _read_flux(tables, wavelengths, target_id):
-    """``OI_FLUX`` spectra, one sample per (row, channel)."""
-    if "OI_FLUX" not in tables:
-        raise ValueError("extras 'flux'/'nflux' need an OI_FLUX table.")
-    keys = ("wavel", "value", "error", "flag", "mjd", "row", "station")
-    out = {key: [] for key in keys}
-    n_row = 0
-    for hdu in tables["OI_FLUX"]:
-        mask = _row_mask(hdu, target_id)
-        if not onp.any(mask):
-            continue
-        wave = _table_wavelengths(hdu, wavelengths)
-        nwave = wave.size
-        names = hdu.columns.names
-        value_col = "FLUXDATA" if "FLUXDATA" in names else "FLUX"
-        if value_col not in names or "FLUXERR" not in names:
-            raise ValueError(
-                "OI_FLUX table has no FLUXDATA (or FLUX) and FLUXERR columns."
-            )
-        values = _column(hdu, value_col, mask, nwave)
-        errors = _column(hdu, "FLUXERR", mask, nwave)
-        flag = _flags(hdu, mask, nwave, values, errors)
-        nrow = values.shape[0]
-        if "STA_INDEX" in names:
-            station = _column(hdu, "STA_INDEX", mask, dtype=int).reshape(-1)
-        else:
-            station = onp.full(nrow, -1)
-        rows = n_row + onp.arange(nrow)
-        n_row += nrow
-        parts = (
-            onp.tile(wave, nrow),
-            values,
-            errors,
-            flag,
-            onp.repeat(_mjd(hdu, mask), nwave),
-            onp.repeat(rows, nwave),
-            onp.repeat(station[:nrow], nwave),
-        )
-        for key, x in zip(out, parts):
-            out[key].append(onp.asarray(x).reshape(-1))
-    if not out["value"]:
-        raise ValueError("No OI_FLUX rows for this target.")
-    return {key: onp.concatenate(x) for key, x in out.items()}
-
-
-def _concat_extras(records, out):
-    """Concatenate the extra observables of single-file records."""
-    sample_offsets = onp.cumsum([0] + [onp.size(r["u"]) for r in records[:-1]])
-    for key in ("t3amp", "visamp", "visphi", "flux", "nflux"):
-        present = [key in r for r in records]
-        if not any(present):
-            continue
-        if not all(present):
-            raise ValueError(
-                f"Some files have the extra observable {key!r} and others "
-                "do not: read them separately."
-            )
-        parts = [r[key] for r in records]
-        row_offsets = onp.cumsum(
-            [0] + [p["row"].max() + 1 if "row" in p else 0 for p in parts[:-1]]
-        )
-        merged = {}
-        for name in parts[0]:
-            if name == "amptyp":
-                kinds = {p[name] for p in parts}
-                if len(kinds) > 1:
-                    raise ValueError(
-                        f"Files disagree on the VISAMP AMPTYP: {sorted(kinds)}."
-                    )
-                merged[name] = kinds.pop()
-                continue
-            shift = {"sample": sample_offsets, "row": row_offsets}.get(name)
-            merged[name] = onp.concatenate(
-                [
-                    onp.asarray(p[name]) + (0 if shift is None else shift[i])
-                    for i, p in enumerate(parts)
-                ]
-            )
-        out[key] = merged
-
-
 def _read_hdulist(
     hdul, target, insname=None, frame_mjd="mean", extras=(), bandwidth=False
 ):
     tables = _select_insname(_collect_tables(hdul), insname)
-    wavelengths = _wavelength_tables(tables)
-    target_tables = ["OI_VIS2", "OI_VIS", "OI_T3"]
+    wavelengths = {}
+    for hdu in tables.get("OI_WAVELENGTH", []):
+        wavelengths[_insname(hdu)] = onp.asarray(
+            hdu.data["EFF_WAVE"], dtype=float
+        ).reshape(-1)
+    if not wavelengths:
+        raise ValueError("OIFITS file has no OI_WAVELENGTH table.")
+    data_names = ["OI_VIS2", "OI_VIS", "OI_T3"]
     if {"flux", "nflux"} & set(extras):
-        target_tables.append("OI_FLUX")
-    target_id = _select_target(tables, target, tuple(target_tables))
+        data_names.append("OI_FLUX")
+    # The TARGET_ID to keep, or None to keep every row.
+    target_names = {}
+    for hdu in tables.get("OI_TARGET", []):
+        for tid, name in zip(hdu.data["TARGET_ID"], hdu.data["TARGET"]):
+            target_names[int(tid)] = str(name).strip()
+    ids = set()
+    for name in data_names:
+        for hdu in tables.get(name, []):
+            if "TARGET_ID" in hdu.columns.names:
+                ids.update(int(i) for i in onp.asarray(hdu.data["TARGET_ID"]))
+    if target is None:
+        if len(ids) > 1:
+            listing = {i: target_names.get(i, "?") for i in sorted(ids)}
+            raise ValueError(
+                f"OIFITS file contains data on several targets {listing}; "
+                "choose one with target=<name or TARGET_ID>."
+            )
+        target_id = None
+    elif isinstance(target, str):
+        matches = [
+            tid
+            for tid, name in target_names.items()
+            if name.lower() == target.strip().lower()
+        ]
+        if not matches:
+            raise ValueError(
+                f"Target {target!r} is not in OI_TARGET "
+                f"({sorted(target_names.values())})."
+            )
+        target_id = matches[0]
+    else:
+        target_id = int(target)
 
     record, lookup = _read_visibilities(tables, wavelengths, target_id, extras)
     if "OI_T3" in tables:
@@ -1155,7 +1060,31 @@ def _read_hdulist(
     _read_extras(tables, wavelengths, target_id, lookup, record, extras)
     record["mjd"], record["frame"] = lookup.times(frame_mjd)
     record["stations"] = lookup.stations()
-    widths = _sample_bandwidth(record, tables) if bandwidth else None
+    widths = None
+    if bandwidth:
+        # Per-sample EFF_BAND, matched to channels by wavelength; files that
+        # give no width, or only zeros, have none, so smearing stays off.
+        by_wave = {}
+        for hdu in tables.get("OI_WAVELENGTH", []):
+            if "EFF_BAND" not in hdu.columns.names or hdu.header.get(
+                "BANDEST"
+            ):
+                continue  # BANDEST: written as an estimate, not a measured width
+            wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
+            band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
+            for w, b in zip(wave.tolist(), band.tolist()):
+                if by_wave.setdefault(w, b) != b:
+                    raise ValueError(
+                        f"Two OI_WAVELENGTH channels at {w:.6g} m have "
+                        "different EFF_BAND values (several instruments?): "
+                        "choose one with insname=."
+                    )
+        wavel = onp.broadcast_to(
+            onp.asarray(record["wavel"]), onp.shape(record["u"])
+        )
+        band = onp.array([by_wave.get(w, 0.0) for w in wavel.tolist()])
+        if onp.all(onp.isfinite(band)) and onp.any(band > 0):
+            widths = band
     if widths is not None:
         record["bandwidth"] = widths
     unique_wavel = onp.unique(record["wavel"])
@@ -1167,6 +1096,7 @@ def _read_hdulist(
     return record
 
 
+# deliberate: a named step: the multi-file reader's whole merge
 def _concat_records(records):
     """Concatenate single-file records, sample by sample."""
     first = records[0]
@@ -1227,7 +1157,38 @@ def _concat_records(records):
     out.update(
         v2_flag=first["v2_flag"], cp_flag=first["cp_flag"], phi_unit="rad"
     )
-    _concat_extras(records, out)
+    sample_offsets = onp.cumsum([0] + [onp.size(r["u"]) for r in records[:-1]])
+    for key in ("t3amp", "visamp", "visphi", "flux", "nflux"):
+        present = [key in r for r in records]
+        if not any(present):
+            continue
+        if not all(present):
+            raise ValueError(
+                f"Some files have the extra observable {key!r} and others "
+                "do not: read them separately."
+            )
+        parts = [r[key] for r in records]
+        row_offsets = onp.cumsum(
+            [0] + [p["row"].max() + 1 if "row" in p else 0 for p in parts[:-1]]
+        )
+        merged = {}
+        for name in parts[0]:
+            if name == "amptyp":
+                kinds = {p[name] for p in parts}
+                if len(kinds) > 1:
+                    raise ValueError(
+                        f"Files disagree on the VISAMP AMPTYP: {sorted(kinds)}."
+                    )
+                merged[name] = kinds.pop()
+                continue
+            shift = {"sample": sample_offsets, "row": row_offsets}.get(name)
+            merged[name] = onp.concatenate(
+                [
+                    onp.asarray(p[name]) + (0 if shift is None else shift[i])
+                    for i, p in enumerate(parts)
+                ]
+            )
+        out[key] = merged
     return out
 
 
@@ -1293,21 +1254,19 @@ def write_oifits(data, filename, overwrite=True):
 
     An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
     read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
-    observables, errors, flags, frames, wavelengths and (u, v), and to the times
-    if there are any (else MJD 0). Frames whose `MJD` is the same get distinct
-    `TIME`s so that they stay apart. Closure phases without station indices get
-    placeholder stations (`STAPLACE` in the header). Wavelengths are written
-    as float32 (relative error 6e-8). A dictionary of tables
-    (columns as in [writing OIFITS](../oifits_files.md#writing), upper-case
-    OIFITS names) has phases in **degrees**.
+    observables, errors, flags, frames, wavelengths and (u, v), and the times
+    if any (else MJD 0). Frames at one `MJD` get distinct `TIME`s so they stay
+    apart; closure phases without station indices get placeholder stations
+    (`STAPLACE`). Wavelengths are float32 (relative error 6e-8). A dictionary
+    of tables (columns as in [writing OIFITS](../oifits_files.md#writing),
+    upper-case OIFITS names) has phases in **degrees**.
     Source: Duvert et al. (2015), [references](../references.md#duvert2017).
 
     Parameters
     ----------
     data : OIData or dict
-        Squared visibilities with closure or absolute phases, or a mapping of
-        table name to a dict of columns (`OI_WAVELENGTH` and at least one data
-        table).
+        V² with closure or absolute phases, or a mapping of table name to a
+        dict of columns (`OI_WAVELENGTH` and a data table).
     filename : str or os.PathLike
         Output path. Missing parent directories are created.
     overwrite : bool, optional
@@ -1324,9 +1283,9 @@ def write_oifits(data, filename, overwrite=True):
         If `data` is neither an `OIData` nor a mapping.
     ValueError
         If `data` is the flat record `read_oifits` returns (write
-        `OIData(record)` instead), or an `OIData` has a layout OIFITS cannot hold (the message says
-        which): extra observables, gains, projected or uv-grid data, a station
-        index above 32767. No file is written.
+        `OIData(record)` instead), or an `OIData` has a layout OIFITS cannot
+        hold (the message says which): extras, gains, projected or uv-grid
+        data, a station index above 32767. No file is written.
     KeyError
         If a dictionary lacks `OI_WAVELENGTH` or a data table.
     OSError
@@ -1383,10 +1342,67 @@ def build_hdulist(tables):
     )
     estimated = not onp.all(eff_band > 0)
     if estimated:  # OIFITS2 needs EFF_BAND > 0: fill only the unknown widths
-        eff_band = onp.where(eff_band > 0, eff_band, _estimated_band(eff_wave))
+        # Channel widths from the spacing of the wavelengths (1% of each if
+        # none; a duplicated wavelength has no spacing).
+        waves = onp.abs(eff_wave)
+        guess = 0.01 * waves
+        if waves.size > 1:
+            order = onp.argsort(waves)
+            spacing = onp.empty_like(waves)
+            spacing[order] = onp.gradient(waves[order])
+            guess = onp.where(spacing > 0, spacing, guess)
+        eff_band = onp.where(eff_band > 0, eff_band, guess)
 
-    hdus = [_primary_hdu(info)]
-    hdus.append(_target_hdu(tables.get("OI_TARGET"), info))
+    primary = fits.PrimaryHDU()
+    header = primary.header
+    header["CONTENT"] = "OIFITS2"
+    header["ORIGIN"] = str(info.get("ORIGIN", "virgil"))
+    header["DATE"] = datetime.date.today().isoformat()
+    # Keywords that OIFITS2 requires in the primary header.
+    header["DATE-OBS"] = date_obs
+    header["OBJECT"] = str(info.get("OBJECT", info.get("TARGET", "UNKNOWN")))
+    for key in ("TELESCOP", "INSTRUME", "OBSERVER", "INSMODE"):
+        header[key] = str(info.get(key, "N/A"))
+    for key, value in info.items():
+        key = str(key).upper()
+        if key in header or len(key) > 8:
+            continue
+        if isinstance(value, (str, bool, int, float, onp.integer)) or (
+            isinstance(value, onp.floating)
+        ):
+            header[key] = value
+
+    name = str(info.get("TARGET", info.get("OBJECT", "UNKNOWN")))
+    defaults = {
+        "TARGET_ID": ("1I", None, 1),
+        "TARGET": ("32A", None, name),
+        "RAEP0": ("1D", "deg", float(info.get("RA", 0.0))),
+        "DECEP0": ("1D", "deg", float(info.get("DEC", 0.0))),
+        "EQUINOX": ("1E", "yr", 2000.0),
+        "RA_ERR": ("1D", "deg", 0.0),
+        "DEC_ERR": ("1D", "deg", 0.0),
+        "SYSVEL": ("1D", "m/s", 0.0),
+        "VELTYP": ("8A", None, "UNKNOWN"),
+        "VELDEF": ("8A", None, "OPTICAL"),
+        "PMRA": ("1D", "deg/yr", 0.0),
+        "PMDEC": ("1D", "deg/yr", 0.0),
+        "PMRA_ERR": ("1D", "deg/yr", 0.0),
+        "PMDEC_ERR": ("1D", "deg/yr", 0.0),
+        "PARALLAX": ("1E", "deg", 0.0),
+        "PARA_ERR": ("1E", "deg", 0.0),
+        "SPECTYP": ("32A", None, str(info.get("SPECTYP", "UNKNOWN"))),
+    }
+    target = tables.get("OI_TARGET") or {}
+    nrow = onp.atleast_1d(target.get("TARGET_ID", 1)).size
+    columns = []
+    for key, (fmt, unit, default) in defaults.items():
+        values = onp.atleast_1d(target.get(key, default))
+        values = onp.broadcast_to(values, (nrow,))
+        columns.append(fits.Column(key, fmt, unit=unit, array=values))
+    target_hdu = fits.BinTableHDU.from_columns(columns)
+    _set_table_header(target_hdu, "OI_TARGET")
+
+    hdus = [primary, target_hdu]
     hdus.append(
         _array_hdu(tables.get("OI_ARRAY"), info, arrname, tables, data_tables)
     )
@@ -1419,18 +1435,6 @@ def build_hdulist(tables):
     return fits.HDUList(hdus)
 
 
-def _estimated_band(waves):
-    """Channel widths from the spacing of ``waves`` (1% of each if none)."""
-    waves = onp.abs(onp.asarray(waves, dtype=float))
-    band = 0.01 * waves
-    if waves.size > 1:
-        order = onp.argsort(waves)
-        spacing = onp.empty_like(waves)
-        spacing[order] = onp.gradient(waves[order])
-        band = onp.where(spacing > 0, spacing, band)  # duplicates: no spacing
-    return band
-
-
 def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):
     hdu.header["EXTNAME"] = extname
     hdu.header["OI_REVN"] = 2
@@ -1442,61 +1446,7 @@ def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):
         hdu.header["INSNAME"] = insname
 
 
-def _primary_hdu(info):
-    hdu = fits.PrimaryHDU()
-    header = hdu.header
-    header["CONTENT"] = "OIFITS2"
-    header["ORIGIN"] = str(info.get("ORIGIN", "virgil"))
-    header["DATE"] = datetime.date.today().isoformat()
-    # Keywords that OIFITS2 requires in the primary header.
-    header["DATE-OBS"] = str(info.get("DATE-OBS", "2000-01-01"))
-    header["OBJECT"] = str(info.get("OBJECT", info.get("TARGET", "UNKNOWN")))
-    for key in ("TELESCOP", "INSTRUME", "OBSERVER", "INSMODE"):
-        header[key] = str(info.get(key, "N/A"))
-    for key, value in info.items():
-        key = str(key).upper()
-        if key in header or len(key) > 8:
-            continue
-        if isinstance(value, (str, bool, int, float, onp.integer)) or (
-            isinstance(value, onp.floating)
-        ):
-            header[key] = value
-    return hdu
-
-
-def _target_hdu(target, info):
-    name = str(info.get("TARGET", info.get("OBJECT", "UNKNOWN")))
-    defaults = {
-        "TARGET_ID": ("1I", None, 1),
-        "TARGET": ("32A", None, name),
-        "RAEP0": ("1D", "deg", float(info.get("RA", 0.0))),
-        "DECEP0": ("1D", "deg", float(info.get("DEC", 0.0))),
-        "EQUINOX": ("1E", "yr", 2000.0),
-        "RA_ERR": ("1D", "deg", 0.0),
-        "DEC_ERR": ("1D", "deg", 0.0),
-        "SYSVEL": ("1D", "m/s", 0.0),
-        "VELTYP": ("8A", None, "UNKNOWN"),
-        "VELDEF": ("8A", None, "OPTICAL"),
-        "PMRA": ("1D", "deg/yr", 0.0),
-        "PMDEC": ("1D", "deg/yr", 0.0),
-        "PMRA_ERR": ("1D", "deg/yr", 0.0),
-        "PMDEC_ERR": ("1D", "deg/yr", 0.0),
-        "PARALLAX": ("1E", "deg", 0.0),
-        "PARA_ERR": ("1E", "deg", 0.0),
-        "SPECTYP": ("32A", None, str(info.get("SPECTYP", "UNKNOWN"))),
-    }
-    target = target or {}
-    nrow = onp.atleast_1d(target.get("TARGET_ID", 1)).size
-    columns = []
-    for key, (fmt, unit, default) in defaults.items():
-        values = onp.atleast_1d(target.get(key, default))
-        values = onp.broadcast_to(values, (nrow,))
-        columns.append(fits.Column(key, fmt, unit=unit, array=values))
-    hdu = fits.BinTableHDU.from_columns(columns)
-    _set_table_header(hdu, "OI_TARGET")
-    return hdu
-
-
+# deliberate: a named step: the OI_ARRAY table with its two input forms
 def _array_hdu(array, info, arrname, tables, data_tables):
     if array is not None:
         # Station positions are required; the other columns default, so an
@@ -1559,6 +1509,7 @@ def _array_hdu(array, info, arrname, tables, data_tables):
     return hdu
 
 
+# deliberate: a named step: one data table's columns, shared by every table
 def _data_hdu(name, table, info, nwave):
     specs = _TABLE_COLUMNS[name]
     nrow = (
@@ -1623,41 +1574,117 @@ def _oidata_tables(data):
     phases in degrees, or ``(None, reason)`` when the data cannot be written
     faithfully.
     """
-    reason = _unsupported_reason(data)
-    if reason:
-        return None, reason
+    if data.vis_mat is not None or data.phi_mat is not None:
+        return None, "projected observables (vis_mat/phi_mat)"
+    if data.uv_grid is not None:
+        return None, "uv-grid (AMIGO DISCO) data"
+    if data.extras:
+        return None, "extra observables"
+    if data.gains is not None or data.phase_offsets is not None:
+        return None, "calibration gains or closure offsets"
+    if data.cp_flag and data.phi_index is not None:
+        return None, "flagged closure phases"
+    if not data.v2_flag or data.vis_mode != "v2":
+        return None, "visibility amplitudes rather than V²"
     layout, reason = _baseline_layout(data)
     if reason:
         return None, reason
-    tables = _vis2_tables(data, layout)
-    phi = onp.asarray(data.phi, dtype=float)
-    if phi.size == 0:
+    n_b, n_w = layout["n_b"], layout["n_w"]
+    vis = onp.asarray(data.vis, float)
+    d_vis = onp.asarray(data.d_vis, float)
+    vis2 = {}
+    if data.vis_index is not None:
+        index = onp.asarray(data.vis_index, int)
+        vis = _scattered(vis, index, n_b * n_w)
+        d_vis = _scattered(d_vis, index, n_b * n_w)
+        vis2["FLAG"] = onp.isnan(vis).reshape(n_b, n_w)
+    tables = {
+        "info": {"TARGET": "PIPELINE", "INSTRUME": "VIRGIL"},
+        "OI_WAVELENGTH": {"EFF_WAVE": layout["waves"]},
+        "OI_VIS2": {
+            "VIS2DATA": vis.reshape(n_b, n_w),
+            "VIS2ERR": d_vis.reshape(n_b, n_w),
+            "UCOORD": layout["ub"],
+            "VCOORD": layout["vb"],
+            "STA_INDEX": layout["stations"],
+            **vis2,
+        },
+    }
+    if layout["bands"] is not None:
+        tables["OI_WAVELENGTH"]["EFF_BAND"] = layout["bands"]
+    tables["OI_VIS2"]["TIME"] = layout["time"]
+    if layout["placeholders"]:
+        tables["info"]["STAPLACE"] = True
+    if layout["mjd"] is not None:
+        tables["OI_VIS2"]["MJD"] = layout["mjd"]
+        tables["info"]["MJD"] = float(layout["mjd"][0])
+        first_day = int(float(onp.min(layout["mjd"])) // 1)
+        tables["info"]["DATE-OBS"] = (
+            datetime.date(1858, 11, 17) + datetime.timedelta(days=first_day)
+        ).isoformat()
+    if onp.asarray(data.phi, dtype=float).size == 0:
         return tables, None
-    phases = _closure_tables if data.cp_flag else _absolute_phase_tables
-    more, reason = phases(data, layout)
-    if reason:
-        return None, reason
-    tables.update(more)
+    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
+    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
+    if data.cp_flag:
+        stations = layout["stations"]
+        baselines = _closure_baselines(data, n_w)
+        if baselines is None or phi.size != baselines[0].size * n_w:
+            return None, _IRREGULAR_CP
+        b1, b2, b3 = baselines
+        # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e. the
+        # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
+        if not (
+            onp.all(stations[b2, 0] == stations[b1, 1])
+            and onp.all(stations[b3, 0] == stations[b1, 0])
+            and onp.all(stations[b3, 1] == stations[b2, 1])
+        ):
+            return None, _IRREGULAR_CP
+        ub, vb = layout["ub"], layout["vb"]
+        table = {
+            "T3PHI": phi.reshape(-1, n_w),
+            "T3PHIERR": d_phi.reshape(-1, n_w),
+            "U1COORD": ub[b1],
+            "V1COORD": vb[b1],
+            "U2COORD": ub[b2],
+            "V2COORD": vb[b2],
+            "STA_INDEX": onp.stack(
+                [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
+            ),
+        }
+        table["TIME"] = layout["time"][b1]
+        if layout["mjd"] is not None:
+            table["MJD"] = layout["mjd"][b1]
+        tables["OI_T3"] = table
+        return tables, None
+    table = {}
+    if data.phi_index is not None:
+        index = onp.asarray(data.phi_index, int)
+        phi = _scattered(phi, index, n_b * n_w)
+        d_phi = _scattered(d_phi, index, n_b * n_w)
+        table["FLAG"] = onp.isnan(phi).reshape(n_b, n_w)
+    if phi.size != n_b * n_w:
+        return None, "absolute phases do not match the samples"
+    table.update(
+        {
+            "VISPHI": phi.reshape(n_b, n_w),
+            "VISPHIERR": d_phi.reshape(n_b, n_w),
+            "VISAMP": onp.full((n_b, n_w), onp.nan),
+            "VISAMPERR": onp.full((n_b, n_w), onp.nan),
+            "UCOORD": layout["ub"],
+            "VCOORD": layout["vb"],
+            "STA_INDEX": layout["stations"],
+        }
+    )
+    table["TIME"] = layout["time"]
+    if layout["mjd"] is not None:
+        table["MJD"] = layout["mjd"]
+    tables["OI_VIS"] = table
     return tables, None
 
 
-def _unsupported_reason(data):
-    """Why ``data`` has more than the supported observables, or ``None``."""
-    if data.vis_mat is not None or data.phi_mat is not None:
-        return "projected observables (vis_mat/phi_mat)"
-    if data.uv_grid is not None:
-        return "uv-grid (AMIGO DISCO) data"
-    if data.extras:
-        return "extra observables"
-    if data.gains is not None or data.phase_offsets is not None:
-        return "calibration gains or closure offsets"
-    if data.cp_flag and data.phi_index is not None:
-        return "flagged closure phases"
-    if not data.v2_flag or data.vis_mode != "v2":
-        return "visibility amplitudes rather than V²"
-    return None
-
-
+# deliberate: a named step: the one place that decides whether an OIData
+# fits the OIFITS layout, with a reason for each way it cannot.
 def _baseline_layout(data):
     """Samples as ``n_b`` baselines by ``n_w`` channels: ``(layout, reason)``.
 
@@ -1691,9 +1718,16 @@ def _baseline_layout(data):
     n_vis = u.size if data.vis_index is None else data.vis_index.size
     if onp.asarray(data.vis).size != n_vis:
         return None, "visibilities do not match the samples"
-    stations, reason = _stations(data, n_b, n_w)
-    if reason:
-        return None, reason
+    if data.stations is not None:
+        stations = onp.asarray(data.stations, dtype=int)
+        stations = stations.reshape(n_b, n_w, 2)[:, 0]
+    elif not data.cp_flag:
+        index = onp.arange(n_b)
+        stations = onp.stack([2 * index + 1, 2 * index + 2], axis=1)
+    else:
+        stations, reason = _stations_from_triangles(data, n_b, n_w)
+        if reason:
+            return None, reason
     mjd = None
     if data.dt is not None and data.t_ref is not None:
         dt = onp.asarray(data.dt, dtype=float).reshape(n_b, n_w)
@@ -1704,7 +1738,23 @@ def _baseline_layout(data):
         if not onp.all(frames == frames[:, :1]):
             return None, "a baseline's channels are in different frames"
         frame = frames[:, 0]
-    time = _frame_times(frame, mjd)
+    # TIME [s] of every baseline that keeps its frames apart on reading. The
+    # reader merges rows within _MJD_TOLERANCE in both MJD and TIME, so frames
+    # at one MJD (all of them, for data without times) are written _FRAME_STEP
+    # apart in TIME; other frames get 0.
+    labels, inverse = onp.unique(frame, return_inverse=True)
+    when = onp.zeros(labels.size)
+    if mjd is not None:
+        when = onp.array(
+            [onp.mean(mjd[inverse == k]) for k in range(labels.size)]
+        )
+    offset = onp.zeros(labels.size)
+    previous = None
+    for k in onp.argsort(when, kind="stable"):
+        if previous is not None and when[k] - when[previous] <= _MJD_TOLERANCE:
+            offset[k] = offset[previous] + _FRAME_STEP
+        previous = k
+    time = offset[inverse]
     placeholders = data.stations is None
     if _repeated(stations, mjd, time):
         # The reader tells repeated baselines apart by station pair and time,
@@ -1735,67 +1785,15 @@ def _baseline_layout(data):
     }, None
 
 
-def _stations(data, n_b, n_w):
-    """Station pair of every baseline: the data's, or placeholders."""
-    if data.stations is not None:
-        stations = onp.asarray(data.stations, dtype=int)
-        return stations.reshape(n_b, n_w, 2)[:, 0], None
-    if not data.cp_flag:
-        index = onp.arange(n_b)
-        return onp.stack([2 * index + 1, 2 * index + 2], axis=1), None
-    return _stations_from_triangles(data, n_b, n_w)
-
-
 def _stations_from_triangles(data, n_b, n_w):
     """Placeholder stations chaining the triangles, or a reason."""
     legs = _closure_baselines(data, n_w)
     if legs is None:
         return None, _IRREGULAR_CP
-    stations = _closure_stations(*legs, n_b)
-    if onp.any(
-        stations[:, 0] == stations[:, 1]
-    ):  # a leg joins a station to itself
-        return None, _IRREGULAR_CP
-    return stations, None
-
-
-def _frame_times(frame, mjd):
-    """``TIME`` [s] of every baseline that keeps its frames apart on reading.
-
-    The reader merges rows within ``_MJD_TOLERANCE`` in both ``MJD`` and
-    ``TIME``, so frames at one ``MJD`` (all of them, for data without times)
-    are written ``_FRAME_STEP`` apart in ``TIME``; other frames get 0.
-    """
-    labels, inverse = onp.unique(frame, return_inverse=True)
-    when = onp.zeros(labels.size)
-    if mjd is not None:
-        when = onp.array(
-            [onp.mean(mjd[inverse == k]) for k in range(labels.size)]
-        )
-    offset = onp.zeros(labels.size)
-    previous = None
-    for k in onp.argsort(when, kind="stable"):
-        if previous is not None and when[k] - when[previous] <= _MJD_TOLERANCE:
-            offset[k] = offset[previous] + _FRAME_STEP
-        previous = k
-    return offset[inverse]
-
-
-def _repeated(stations, mjd, time):
-    """Whether two baselines share a station pair, ``MJD`` and ``TIME``."""
-    key = onp.column_stack(
-        [stations, onp.zeros(len(stations)) if mjd is None else mjd, time]
-    )
-    return len(onp.unique(key, axis=0)) < len(stations)
-
-
-def _closure_stations(b1, b2, b3, n_b):
-    """Station pairs consistent with the triangles' baselines AB, BC, AC.
-
-    Each baseline has two ends; a triangle identifies end B of AB with end B
-    of BC, end A of AB with end A of AC, and end C of BC with end C of AC.
-    Each class of identified ends is one station, numbered from 1.
-    """
+    b1, b2, b3 = legs
+    # Each baseline has two ends; a triangle identifies end B of AB with end B
+    # of BC, end A of AB with end A of AC, and end C of BC with end C of AC.
+    # Each class of identified ends is one station, numbered from 1.
     roots = _merge(
         2 * n_b,
         (
@@ -1809,13 +1807,20 @@ def _closure_stations(b1, b2, b3, n_b):
         ),
     ).tolist()
     number = {r: k + 1 for k, r in enumerate(dict.fromkeys(roots))}
-    return onp.array([number[r] for r in roots]).reshape(n_b, 2)
+    stations = onp.array([number[r] for r in roots]).reshape(n_b, 2)
+    if onp.any(
+        stations[:, 0] == stations[:, 1]
+    ):  # a leg joins a station to itself
+        return None, _IRREGULAR_CP
+    return stations, None
 
 
-def _date_obs(mjd):
-    """ISO date of a modified Julian date."""
-    day = datetime.date(1858, 11, 17) + datetime.timedelta(days=int(mjd // 1))
-    return day.isoformat()
+def _repeated(stations, mjd, time):
+    """Whether two baselines share a station pair, ``MJD`` and ``TIME``."""
+    key = onp.column_stack(
+        [stations, onp.zeros(len(stations)) if mjd is None else mjd, time]
+    )
+    return len(onp.unique(key, axis=0)) < len(stations)
 
 
 def _scattered(values, index, n):
@@ -1823,69 +1828,6 @@ def _scattered(values, index, n):
     out = onp.full(n, onp.nan)
     out[index] = values
     return out
-
-
-def _vis2_tables(data, layout):
-    n_b, n_w = layout["n_b"], layout["n_w"]
-    vis = onp.asarray(data.vis, float)
-    d_vis = onp.asarray(data.d_vis, float)
-    table = {}
-    if data.vis_index is not None:
-        index = onp.asarray(data.vis_index, int)
-        vis = _scattered(vis, index, n_b * n_w)
-        d_vis = _scattered(d_vis, index, n_b * n_w)
-        table["FLAG"] = onp.isnan(vis).reshape(n_b, n_w)
-    tables = {
-        "info": {"TARGET": "PIPELINE", "INSTRUME": "VIRGIL"},
-        "OI_WAVELENGTH": {"EFF_WAVE": layout["waves"]},
-        "OI_VIS2": {
-            "VIS2DATA": vis.reshape(n_b, n_w),
-            "VIS2ERR": d_vis.reshape(n_b, n_w),
-            "UCOORD": layout["ub"],
-            "VCOORD": layout["vb"],
-            "STA_INDEX": layout["stations"],
-            **table,
-        },
-    }
-    if layout["bands"] is not None:
-        tables["OI_WAVELENGTH"]["EFF_BAND"] = layout["bands"]
-    tables["OI_VIS2"]["TIME"] = layout["time"]
-    if layout["placeholders"]:
-        tables["info"]["STAPLACE"] = True
-    if layout["mjd"] is not None:
-        tables["OI_VIS2"]["MJD"] = layout["mjd"]
-        tables["info"]["MJD"] = float(layout["mjd"][0])
-        tables["info"]["DATE-OBS"] = _date_obs(float(onp.min(layout["mjd"])))
-    return tables
-
-
-def _absolute_phase_tables(data, layout):
-    n_b, n_w = layout["n_b"], layout["n_w"]
-    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
-    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
-    table = {}
-    if data.phi_index is not None:
-        index = onp.asarray(data.phi_index, int)
-        phi = _scattered(phi, index, n_b * n_w)
-        d_phi = _scattered(d_phi, index, n_b * n_w)
-        table["FLAG"] = onp.isnan(phi).reshape(n_b, n_w)
-    if phi.size != n_b * n_w:
-        return None, "absolute phases do not match the samples"
-    table.update(
-        {
-            "VISPHI": phi.reshape(n_b, n_w),
-            "VISPHIERR": d_phi.reshape(n_b, n_w),
-            "VISAMP": onp.full((n_b, n_w), onp.nan),
-            "VISAMPERR": onp.full((n_b, n_w), onp.nan),
-            "UCOORD": layout["ub"],
-            "VCOORD": layout["vb"],
-            "STA_INDEX": layout["stations"],
-        }
-    )
-    table["TIME"] = layout["time"]
-    if layout["mjd"] is not None:
-        table["MJD"] = layout["mjd"]
-    return {"OI_VIS": table}, None
 
 
 def _closure_baselines(data, n_w):
@@ -1908,37 +1850,3 @@ def _closure_baselines(data, n_w):
     ):
         return None
     return [r[:, 0] for r in rows]
-
-
-def _closure_tables(data, layout):
-    n_w, stations = layout["n_w"], layout["stations"]
-    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
-    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
-    baselines = _closure_baselines(data, n_w)
-    if baselines is None or phi.size != baselines[0].size * n_w:
-        return None, _IRREGULAR_CP
-    b1, b2, b3 = baselines
-    # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e. the
-    # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
-    if not (
-        onp.all(stations[b2, 0] == stations[b1, 1])
-        and onp.all(stations[b3, 0] == stations[b1, 0])
-        and onp.all(stations[b3, 1] == stations[b2, 1])
-    ):
-        return None, _IRREGULAR_CP
-    ub, vb = layout["ub"], layout["vb"]
-    table = {
-        "T3PHI": phi.reshape(-1, n_w),
-        "T3PHIERR": d_phi.reshape(-1, n_w),
-        "U1COORD": ub[b1],
-        "V1COORD": vb[b1],
-        "U2COORD": ub[b2],
-        "V2COORD": vb[b2],
-        "STA_INDEX": onp.stack(
-            [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
-        ),
-    }
-    table["TIME"] = layout["time"][b1]
-    if layout["mjd"] is not None:
-        table["MJD"] = layout["mjd"][b1]
-    return {"OI_T3": table}, None

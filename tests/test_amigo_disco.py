@@ -115,3 +115,10 @@ def test_mixed_disco_record_validation_rejects_bad_shapes_and_covariance():
     bad_sigma["disco_covariance"] = onp.diag(bad_sigma["disco_sigma"] ** 2)
     with pytest.raises(ValueError, match="increasing uncertainty"):
         OIData(bad_sigma)
+
+    mismatched = dict(_small_mixed_record())
+    mismatched["disco_covariance"] = onp.diag(
+        2 * mismatched["disco_sigma"] ** 2
+    )
+    with pytest.raises(ValueError, match="sigma squared"):
+        OIData(mismatched)
