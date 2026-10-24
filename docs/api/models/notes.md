@@ -335,6 +335,37 @@ the parametric profiles, uv deprojection and Gaussian envelope follow vis-r
 (Kennedy 2025, RASTI 4, rzaf004). The code is a new implementation; none was
 copied.
 
+## ExpTail
+
+A Gauss-Laguerre rule covers the oscillating tail less efficiently than a
+Gauss-Legendre rule covers a finite range, and its accuracy depends on
+$2\pi q L$ at the longest baseline $q$. The rule of thumb $16 \cdot 2\pi q L$
+nodes (24 nodes at $2\pi q L = 1$, 100 at 5) is optimistic when the tail is
+well resolved: in a benchmark of a widely resolved tail the largest error in
+$V$ was about $2 \times 10^{-4}$ at 128 nodes and about $4 \times 10^{-5}$ at
+the 150-node cap, not $10^{-5}$. For a tail resolved much more finely, prefer a
+[`RadialPowerLaw`][virgil.models.RadialPowerLaw] with a soft edge, or give a
+`cutoff`: the tail is cut at $r_{\rm in} + \mathrm{cutoff}\, L$ (the light beyond
+is dropped; a cutoff of 5 drops 0.7 % of the flux of a thin disk) and
+integrated by a Gauss-Legendre rule, which needs about
+$\pi q\, \mathrm{cutoff}\, L + 12$ nodes. See
+[`MultipoleDisk.suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r].
+
+## Bandwidth smearing
+
+[`smeared_model`][virgil.models.smeared_model] averages over a boxcar channel of
+full width $\Delta\lambda$ the visibility of a source at offset $\mathbf{s}$. This
+multiplies the component's offset phasor by the real envelope
+$\mathrm{sinc}(\pi\,\Delta\lambda\,(u\,\mathrm{dra} + v\,\mathrm{ddec})/\lambda^2)$, with
+$u$, $v$ in metres and the offsets in radians. It is applied to each component of a
+[`System`][virgil.models.System] before the components are weighted and summed
+(offsets add down nested systems), not to the final visibility, so the flux weights
+and the zero-offset component are unchanged. The model is the first-order one: the
+weights and the shape of each component are taken at the channel centre, and an
+extended component is smeared as if it sat at its centre offset (its internal
+structure is not smeared). A component at zero offset is exactly unaffected.
+[`Resolved`][virgil.models.Resolved] pieces have no offset to smear.
+
 ## MultipoleField
 
 The prior on the field $\eta$ is separable,
