@@ -9,9 +9,6 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- Batch F of the 0.4.2 refactor (virgil#536): single-use private helpers in `fitting`, `inference`, `likelihood`,
-  `svi`, `ensemble` and `_gauss_newton` inlined (the rest marked `# deliberate:`), long docstrings in
-  `fit`, `FitResult`, `numpyro_model`, `variational`, `gauss_newton_diag` and others trimmed; no behaviour changes.
 - `fit(method="adam")` now runs in jitted chunks of 200 steps (same trajectory, step for step), so `time_limit` and `progress` apply to it, and it reports convergence: `info["converged"]` is `True` if the `ftol_abs` plateau stop fired or `grad_norm <= gtol`, else `False` with `info["stop"]` `"limit"`, `"time"` or `"non-finite"` (it was `None`, so an Adam fit that hits `max_steps` now warns). New keywords: `adam_eps` (`optax.adam`'s `eps`), `ftol_abs` and `ftol_window` (stop when the loss fell by less than `ftol_abs` over the last `ftol_window` steps); `info["loss_history"]` is the unscaled loss before each Adam step. `ftol_window` below 1 raises `ValueError`. #534
 - Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
   and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
